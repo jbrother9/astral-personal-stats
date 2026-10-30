@@ -43,7 +43,7 @@ namespace AstralPersonalMod {
  public sealed class ChipPanel {public string key{get;set;}public string title{get;set;}public int analyzed{get;set;}public int total{get;set;}public int selections{get;set;}public int rerolls{get;set;}public ChipItem[] items{get;set;}}
  public sealed class DiceRole {public int count{get;set;}public string average{get;set;}public int[] faces{get;set;}}
  public sealed class DicePanel {public int analyzed{get;set;}public int total{get;set;}public int unknown{get;set;}public DiceRole attack{get;set;}public DiceRole defense{get;set;}public DiceRole dodge{get;set;}}
- public sealed class CardPanel {public CardTopItem[] battle_used{get;set;}public CardTopItem[] effect_used{get;set;}public DicePanel dice{get;set;}public ChipPanel chips{get;set;}public string key{get;set;}public string title{get;set;}public int analyzed{get;set;}public int total{get;set;}public int unresolved_use{get;set;}public int unresolved_purchase{get;set;}public int assisted_purchase{get;set;}public CardTopItem[] used{get;set;}public CardTopItem[] acquired{get;set;}public CardTopItem[] bought{get;set;}}
+ public sealed class CardPanel {public string[][] basic_rows{get;set;}public CardTopItem[] battle_used{get;set;}public CardTopItem[] effect_used{get;set;}public DicePanel dice{get;set;}public ChipPanel chips{get;set;}public string key{get;set;}public string title{get;set;}public int analyzed{get;set;}public int total{get;set;}public int unresolved_use{get;set;}public int unresolved_purchase{get;set;}public int assisted_purchase{get;set;}public CardTopItem[] used{get;set;}public CardTopItem[] acquired{get;set;}public CardTopItem[] bought{get;set;}}
  public sealed class GameDetail {public MatchAppearance[] participants{get;set;}public CardPanel cards{get;set;}public string title{get;set;}public string[][] rows{get;set;}}
  public sealed class CollectionState {public int schema{get;set;}public long owner_id{get;set;}public long heartbeat{get;set;}public string kind{get;set;}public string label{get;set;}}
  public sealed class StatsSnapshot {
@@ -198,12 +198,13 @@ namespace AstralPersonalMod {
    long generated=value.generated_at;try{value.generated_at=0;return JsonSerializer.Serialize(value);}finally{value.generated_at=generated;}
   }
   void ClearBody(){portraits.Clear();NativeUI.Call(body,"RemoveChildren",0,-1,true);PruneClicks();}
-  void Render(){if(!open||body==null)return;LayoutContentTabs();bool pages=cardView||chipView||(!cardView&&!diceView&&selected<0);NativeUI.Set(previousButton,"visible",pages);NativeUI.Set(nextButton,"visible",pages);UpdateFilterLabels();for(int i=0;i<4;i++)SetButtonSelected(tabs[i],i==tab);ClearBody();if(snapshot==null||snapshot.tab!=tab||snapshot.mode!=mode||snapshot.map!=map||snapshot.hero!=hero||snapshot.page!=page){Label(body,"통계를 불러오는 중입니다…",15,24,1000,35,22);NativeUI.Set(footer,"text","분석기가 준비되면 자동으로 표시됩니다.");return;}
+  void Render(){if(!open||body==null)return;LayoutContentTabs();bool pages=cardView||chipView||(!cardView&&!diceView&&selected<0&&cardKey==null);NativeUI.Set(previousButton,"visible",pages);NativeUI.Set(nextButton,"visible",pages);UpdateFilterLabels();for(int i=0;i<4;i++)SetButtonSelected(tabs[i],i==tab);ClearBody();if(snapshot==null||snapshot.tab!=tab||snapshot.mode!=mode||snapshot.map!=map||snapshot.hero!=hero||snapshot.page!=page){Label(body,"통계를 불러오는 중입니다…",15,24,1000,35,22);NativeUI.Set(footer,"text","분석기가 준비되면 자동으로 표시됩니다.");return;}
    UpdateFilterLabels();NativeUI.Set(status,"text",(snapshot.summary!=null&&snapshot.summary.Length>0?snapshot.summary[0]:"플레이 기록")+" · ID "+owner);NativeUI.Set(pveSummary,"text",(snapshot.pve_summary??"PvE 기록 없음").Replace("PvE ",""));NativeUI.Set(pvpSummary,"text",(snapshot.pvp_summary??"PvP 기록 없음").Replace("PvP ",""));
    if(selected>=0&&snapshot.details!=null&&selected<snapshot.details.Length){DrawDetail(snapshot.details[selected]);return;}
    if(diceView){DrawDice(CurrentCards()?.dice,false);return;}
    if(chipView){DrawChips(CurrentCards()?.chips);return;}
    if(cardView){DrawCards(CurrentCards());return;}
+   if(cardKey!=null){DrawGroupBasic(CurrentCards());return;}
    float[] widths=tab==3?new float[]{143,129,222,162,112,126,72}:new float[]{170,120,50,45,45,70,125,75,115,115};
    Round(body,0,0,1054,36,accent,10);float x=12;for(int c=0;c<snapshot.columns.Length&&c<widths.Length;c++){var heading=Label(body,snapshot.columns[c],x,7,widths[c]-8,28,tab==3?17:14);TextColor(heading,Color.white);x+=widths[c];}
    if(snapshot.rows.Length==0){Label(body,"아직 수집된 경기가 없습니다.",16,82,1000,36,23,true);Label(body,"설치 후 플레이한 경기가 분석되면 이곳에 표시됩니다.",16,130,1000,30,18);}
@@ -214,7 +215,7 @@ namespace AstralPersonalMod {
     x=12;for(int c=0;c<snapshot.rows[r].Length&&c<widths.Length;c++){var cell=Label(row,snapshot.rows[r][c],x,8,widths[c]-8,28,tab==3?17:14,c==0);if(tab==3&&c==4){string result=snapshot.rows[r][c];if(result.StartsWith("승리"))TextColor(cell,new Color(.12f,.47f,.28f,1));else if(result.StartsWith("패배"))TextColor(cell,pink);}x+=widths[c];}
    }
    if(tab!=3)DrawKillerSummary(snapshot.killers);
-   NativeUI.Set(footer,"text",(snapshot.page+1)+" / "+snapshot.pages+" 페이지 · "+snapshot.total_rows+" 항목"+(tab==3?" · 경기를 누르면 상세 합계":" · 항목을 누르면 해당 그룹 카드 통계"));
+   NativeUI.Set(footer,"text",(snapshot.page+1)+" / "+snapshot.pages+" 페이지 · "+snapshot.total_rows+" 항목"+(tab==3?" · 경기를 누르면 상세 합계":" · 항목을 누르면 해당 그룹 상세 통계"));
   }
   MatchAppearance SelectedParticipant(GameDetail d){if(d.participants==null)return null;foreach(var p in d.participants)if(p.player_id==selectedPlayer&&selectedPlayer>0)return p;foreach(var p in d.participants)if(p.own)return p;return null;}
   void DrawDetail(GameDetail d){
@@ -233,9 +234,17 @@ namespace AstralPersonalMod {
    if(cardView){DrawParticipantCards(current?.cards??(current==null?d.cards:null));return;}
    if(chipView){DrawParticipantChips(current?.cards?.chips??(current==null?d.cards?.chips:null));return;}
    var rows=current?.rows??d.rows;
-   Label(body,"지표",360,45,305,28,16);Label(body,"경기 합계",690,45,125,28,16);Label(body,"선택 유저 턴당 평균",835,45,210,28,16);
-   for(int i=0;rows!=null&&i<rows.Length&&i<15;i++){float y=76+i*20;Round(body,352,y,702,20,i%2==0?Color.white:rose,5);Label(body,rows[i][0],360,y+1,320,19,14);Label(body,rows[i][1],690,y+1,125,19,14);Label(body,rows[i][2],835,y+1,210,19,14);}
-   NativeUI.Set(footer,"text","이동: 경로 칸 수 · 피해: 가해자 확인된 실제 HP 감소");
+   Label(body,"지표",360,33,305,24,16);Label(body,"경기 합계",690,33,125,24,16);Label(body,"선택 유저 턴당 평균",835,33,210,24,16);
+   for(int i=0;rows!=null&&i<rows.Length&&i<17;i++){float y=59+i*19;Round(body,352,y,702,19,i%2==0?Color.white:rose,5);Label(body,rows[i][0],360,y+1,320,19,14);Label(body,rows[i][1],690,y+1,125,19,14);Label(body,rows[i][2],835,y+1,210,19,14);}
+   NativeUI.Set(footer,"text","");
+  }
+  void DrawGroupBasic(CardPanel data){
+   if(data==null){Label(body,"통계를 불러오는 중입니다…",16,30,1000,35,20);return;}
+   Label(body,(data.title??"통계").Replace(" 카드 순위",""),16,6,1000,30,21,true);
+   Label(body,"지표",24,53,440,28,16);Label(body,"합계 / 최고 기록",480,53,270,28,16);Label(body,"경기당 평균",800,53,230,28,16);
+   var rows=data.basic_rows;
+   for(int i=0;rows!=null&&i<rows.Length&&i<8;i++){float y=94+i*43;Round(body,0,y,1054,38,i%2==0?Color.white:rose,8);Label(body,rows[i][0],24,y+6,440,27,17);Label(body,rows[i][1],480,y+6,300,27,17);Label(body,rows[i][2],800,y+6,230,27,17);}
+   NativeUI.Set(footer,"text","");
   }
   void DrawParticipantCards(CardPanel data){
    if(data==null){Label(body,"선택한 참가자의 카드 기록을 준비하고 있습니다.",360,80,680,35,18);return;}
@@ -260,7 +269,7 @@ namespace AstralPersonalMod {
    NativeUI.Set(footer,"text",(chipPage+1)+" / "+pages+" 페이지 · 선택한 참가자의 해당 경기 칩");
   }
   int ContentIndex=>diceView?3:chipView?2:cardView?1:0;
-  void SetContent(int index){CloseDropdown();if(tab==3&&selected<0&&index!=0)return;cardView=index==1;chipView=index==2;diceView=index==3;chipPage=cardPage=0;if(index==0)cardKey=null;Render();}
+  void SetContent(int index){CloseDropdown();if(tab==3&&selected<0&&index!=0)return;cardView=index==1;chipView=index==2;diceView=index==3;chipPage=cardPage=0;Render();}
   public void ShowDice(){SetContent(3);}
   public void ShowBasic(){SetContent(0);}
   void LayoutContentTabs(){
@@ -360,7 +369,7 @@ namespace AstralPersonalMod {
   public void NextMode(){ToggleDropdown(1);}public void NextMap(){ToggleDropdown(2);}public void NextHero(){ToggleDropdown(3);}
   public void PreviousPage(){if(cardView){PreviousCards();return;}if(chipView){PreviousChips();return;}if(page>0){page--;Change();}}public void NextPage(){if(cardView){NextCards();return;}if(chipView){NextChips();return;}if(snapshot!=null&&page+1<snapshot.pages){page++;Change();}}
   public void RefreshStats(){RuntimeGameCatalog.Invalidate();CloseDropdown();Request();nextRead=0;}public void BackToList(){cardPage=0;diceView=false;chipView=false;selectedPlayer=0;cardView=false;cardKey=null;selected=-1;Render();}
-  void Select(int r){cardPage=0;diceView=false;chipView=false;if(snapshot==null)return;if(tab==3){if(snapshot.details==null||r>=snapshot.details.Length)return;selected=r;selectedPlayer=0;cardView=false;}else{if(snapshot.row_cards==null||r>=snapshot.row_cards.Length)return;cardKey=snapshot.row_cards[r].key;selected=-1;cardView=true;}Render();}
+  void Select(int r){cardPage=0;diceView=false;chipView=false;if(snapshot==null)return;if(tab==3){if(snapshot.details==null||r>=snapshot.details.Length)return;selected=r;selectedPlayer=0;cardView=false;}else{if(snapshot.row_cards==null||r>=snapshot.row_cards.Length)return;cardKey=snapshot.row_cards[r].key;selected=-1;cardView=false;}Render();}
   public void Row0(){Select(0);}public void Row1(){Select(1);}public void Row2(){Select(2);}public void Row3(){Select(3);}public void Row4(){Select(4);}public void Row5(){Select(5);}public void Row6(){Select(6);}public void Row7(){Select(7);}
  }
 }

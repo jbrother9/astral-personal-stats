@@ -12,11 +12,21 @@ def number(v):return '-' if v is None else f'{v:.2f}'.rstrip('0').rstrip('.')
 def duration(v):return f'{int(v or 0)//60}분 {int(v or 0)%60}초'
 def metric_rows(totals):
  turns=totals.get('turns',0);lines=[]
- for key,label in [('turns','플레이어 턴'),('deaths','사망'),('npc_last_hits','NPC 막타'),('effect_cards','효과 카드 사용'),('battle_cards','전투 카드 사용'),('skills','스킬 사용'),('chip_selection_events','칩 선택 횟수'),('dice_events','이동 주사위 굴림 횟수'),('movement_distance','총 이동 거리 (칸)'),('damage_dealt','총 피해량 (가한 피해)'),('gold_increase','골드 증가량'),('gold_decrease','골드 감소량'),('hp_increase','HP 증가량'),('hp_decrease','HP 감소량')]:
+ for key,label in [('turns','플레이어 턴'),('deaths','사망'),('npc_last_hits','NPC 막타'),('effect_cards','효과 카드 사용'),('battle_cards','전투 카드 사용'),('skills','스킬 사용'),('chip_selection_events','칩 선택 횟수'),('dice_events','이동 주사위 굴림 횟수'),('movement_distance','총 이동 거리 (칸)'),('damage_dealt','총 피해량 (가한 피해)'),('damage_taken','총 받은 피해량'),('transferred_gold','전달 골드'),('max_battle_damage','최대 전투 피해'),('gold_increase','골드 증가량'),('gold_decrease','골드 감소량'),('hp_increase','HP 증가량'),('hp_decrease','HP 감소량')]:
   value=totals.get(key);
   if value is None:lines.append([label,'-','-']);continue
-  lines.append([label,str(value),'-' if key=='turns' or not turns else number(value/turns)])
+  lines.append([label,str(value),'-' if key in ('turns','max_battle_damage') or not turns else number(value/turns)])
  return lines
+
+
+def aggregate_metrics(r):
+ rows=[]
+ for key,label in [('damage_dealt','총 피해량 (가한 피해)'),('damage_taken','총 받은 피해량'),('deaths','사망'),('movement_distance','총 이동 거리 (칸)'),('transferred_gold','전달 골드'),('max_battle_damage','최대 전투 피해')]:
+  measured=r[key+'_analyzed'];value=r[key]
+  amount=number(value) if measured else '-'
+  if measured and measured<r['matches']:amount+=' ('+str(measured)+'/'+str(r['matches'])+'경기)'
+  rows.append([label,amount,number(r['average_'+key])])
+ return rows
 
 def card_ranking(*args,**kwargs):
  value=personal.cards.aggregate(*args,**kwargs)
@@ -44,6 +54,7 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
   for r in groups:
    key=r['key'];label='전체' if tab==0 else (maps if tab==1 else heroes).get(key[0],str(key[0]));rows.append(aggregate_row(r,label,key[-1]))
    card=card_ranking(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id)
+   card['basic_rows']=aggregate_metrics(r)
    card.update(key=str(tab)+':'+str(tuple(key)),title=(modes.get(key[-1],str(key[-1])) if tab==0 else label+' · '+modes.get(key[-1],str(key[-1])))+' 카드 순위');card['chips']=personal.chips.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id);card['chips'].update(key=card['key'],title=card['title'].replace('카드 순위','선택한 칩'));card['dice']=personal.dice.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id);row_cards.append(card)
  else:
   columns=['시각 (KST)','캐릭터','맵','모드','결과','경기 시간','사망']
@@ -53,7 +64,7 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
   if hero_id is not None:where+=' AND hero_id=?';params.append(hero_id)
   for rid,finished,hero,mapcode,modecode,rank,seconds,deaths in db.execute('SELECT replay_id,finished_at,hero_id,map_id,map_type,rank,duration,deaths FROM personal_matches WHERE '+where+' ORDER BY finished_at DESC,replay_id DESC',params):
    stamp=datetime.datetime.fromtimestamp(finished,datetime.timezone(datetime.timedelta(hours=9))).strftime('%m-%d %H:%M') if finished else '-'
-   rows.append([stamp,heroes.get(hero,str(hero)),maps.get(mapcode,str(mapcode)),modes.get(modecode,str(modecode)),personal.result_label(modecode,rank),duration(seconds),str(deaths or 0)])
+   rows.append([stamp,heroes.get(hero,str(hero)),maps.get(mapcode,str(mapcode)),modes.get(modecode,str(modecode)),personal.result_label(modecode,rank),duration(seconds),number((personal.game_totals(db,rid,owner) or {}).get('deaths'))])
    # Detail is read only for the visible page; no replay downloads on UI requests.
    detail.append(rid)
  killers=personal.killer_statistics(db,owner,mode,map_id,hero_id)
@@ -75,7 +86,7 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
    participants.append({**person,'hero_name':heroes.get(person['hero_id'],str(person['hero_id'])),'own':pid==owner,'available':totals is not None,'rows':metric_rows(totals or {}),'cards':card})
   totals=personal.game_totals(db,rid,owner) or {}
   card=card_ranking(db,owner,rid=rid);card.update(key=rid,title='이 경기 카드 순위');card['chips']=personal.chips.aggregate(db,owner,rid=rid);card['chips'].update(key=rid,title='이 경기에서 선택한 칩');card['dice']=personal.dice.aggregate(db,owner,rid=rid);details.append({'title':'경기 '+rid,'rows':metric_rows(totals),'cards':card,'participants':participants})
- overview_cards=card_ranking(db,owner,mode,map_id,hero_id);overview_cards.update(key='overview',title='전체 카드 순위 · 현재 필터 기준');overview_cards['chips']=personal.chips.aggregate(db,owner,mode,map_id,hero_id);overview_cards['dice']=personal.dice.aggregate(db,owner,mode,map_id,hero_id)
+ overview_cards=card_ranking(db,owner,mode,map_id,hero_id);overview_cards['basic_rows']=aggregate_metrics(aggregate);overview_cards.update(key='overview',title='전체 카드 순위 · 현재 필터 기준');overview_cards['chips']=personal.chips.aggregate(db,owner,mode,map_id,hero_id);overview_cards['dice']=personal.dice.aggregate(db,owner,mode,map_id,hero_id)
  return {'page_size':page_size,'killers':killers,'card_overview':overview_cards,'row_cards':row_cards[start:start+page_size],'schema':1,'owner_id':owner,'generated_at':int(time.time()),'hero':hero_id if hero_id is not None else -1,'heroes':hero_options,'mode':mode if mode is not None else -1,'map':map_id if map_id is not None else -1,'tab':tab,'page':page,'pages':pages,'total_rows':total,'modes':mode_options,'maps':map_options,
          'summary':[str(count)+' 경기',duration(aggregate['average_duration'])+' 평균 시간']+(['승률 미분류 '+str(stats['by_family']['other']['matches'])+' 경기'] if stats['by_family']['other']['matches'] else []),'pve_summary':personal.family_summary('PvE',stats['by_family']['pve']),'pvp_summary':personal.family_summary('PvP',stats['by_family']['pvp']),
          'columns':columns,'rows':shown,'details':details,'note':'PvE: 1위 승리/2위 패배 · PvP: 1위 승리 · 미확인 결과/모드는 승률 제외'}

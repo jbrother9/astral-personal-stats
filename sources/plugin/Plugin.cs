@@ -13,7 +13,7 @@ using IType = Il2CppSystem.Type;
 using IFlags = Il2CppSystem.Reflection.BindingFlags;
 
 namespace AstralPersonalMod {
- [BepInPlugin("local.astral.personalcollector", "Astral Personal Collector", "0.8.0")]
+ [BepInPlugin("local.astral.personalcollector", "Astral Personal Collector", "0.8.1")]
  public sealed class Plugin : BasePlugin {
   internal static Plugin Instance;
   internal string Backend, Python, WorkerExecutable, DataDir;

@@ -1,6 +1,6 @@
 """Standalone plugin worker and offline diagnostics entry point."""
 import argparse,json,pathlib,sys,os
-VERSION='0.8.0'
+VERSION='0.8.1'
 
 def self_test(base=None):
  import tempfile,struct
@@ -21,7 +21,7 @@ def self_test(base=None):
   player=value(1,owner)+blob(2,b'Fixture')+blob(10,hero)
   room_data=value(1,room)+value(5,82008)+blob(9,player)+value(30,started)+value(36,4)
   hp=value(1,900002)+blob(3,value(1,900002)+value(3,10)+value(4,7)+value(8,2)+value(9,owner))
-  data=frame(1003,blob(1,room_data))+frame(5028,value(1,owner)+blob(2,struct.pack('<2I',1,2)))+frame(5038,value(1,owner)+value(2,6))+frame(5212,value(1,owner)+value(2,50001))+frame(5036,value(1,owner)+value(2,4))+frame(5056,value(1,owner)+value(2,21001))+frame(1040,blob(4,hp))+frame(1016,value(1,room)+value(3,started+90)+blob(11,rid.encode())+blob(12,b'fixture')+value(13,4)+blob(14,value(1,owner)+value(2,1)))
+  data=frame(1003,blob(1,room_data))+frame(5028,value(1,owner)+blob(2,struct.pack('<2I',1,2)))+frame(5038,value(1,owner)+value(2,6))+frame(5212,value(1,owner)+value(2,50001))+frame(5036,value(1,owner)+value(2,4))+frame(5056,value(1,owner)+value(2,21001))+frame(1040,blob(4,hp))+frame(1016,value(1,room)+value(3,started+90)+blob(11,rid.encode())+blob(12,b'fixture')+value(13,4)+blob(7,value(1,owner)+blob(2,value(3,3)+value(14,2)))+blob(14,value(1,owner)+value(2,1)))
   store=storage.Store(root,owner)
   try:
    worker.init(store);worker.accept(store,{'schema':1,'source':'astral-personal-mod','owner_id':owner,'room_id':room,'start_time':started,'replay_id':rid,'reason':'history'})

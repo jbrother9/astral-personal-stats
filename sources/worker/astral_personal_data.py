@@ -5,7 +5,7 @@ import astral_card_stats as cards
 import astral_chip_stats as chips
 import astral_combat_dice as dice
 import astral_paths as paths
-VERSION=4
+VERSION=5
 ROOT=pathlib.Path(__file__).resolve().parent
 DEFAULTS={'player_id':0,'cache_days':7,'cache_enabled':True}
 def settings():
@@ -80,6 +80,9 @@ def analyze(data,summary,owner):
     for field,kind in ((2,'골드 변화'),(3,'HP 변화')):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
      v=replay.protobuf(effect[field][0]);add(kind,{'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'note':'피해/치유 기여도는 아직 집계하지 않음'})
+ settlement=summary.get('settlement',{}).get(str(owner))
+ if settlement is not None:
+  stats['deaths']=settlement['deaths'];add('최종 결과',settlement)
  record=(summary['replay_id'],owner,summary['finish_time'],summary.get('start_time'),person['hero_id'],summary.get('map_id'),summary.get('map_type'),person.get('rank'),max(0,summary['finish_time']-(summary.get('start_time') or summary['finish_time'])),*[stats[k] for k in ('turns','deaths','npc_last_hits','effect_cards','battle_cards','skills')],VERSION)
  return record,events
 
@@ -114,15 +117,25 @@ def summarize_events(record,events):
    if detail.get('current')==3 and isinstance(reached,int) and reached>0:metrics['growth3_round']=min(metrics['growth3_round'] or reached,reached)
  if record[15]<4:
   metrics.pop('movement_distance',None);metrics.pop('damage_dealt',None)
+ if record[15]>=5:
+  settlement=next((json.loads(event[7]) for event in reversed(events) if event[6]=='최종 결과'),None)
+  for key in ('damage_dealt','damage_taken','deaths','movement_distance','transferred_gold','max_battle_damage'):metrics[key]=settlement.get(key) if settlement is not None else None
+  metrics['settlement_available']=settlement is not None
  return metrics
+
+def normalized_totals(value):
+ value=dict(value)
+ if not value.get('settlement_available'):
+  for key in ('damage_dealt','damage_taken','deaths','movement_distance','transferred_gold','max_battle_damage'):value[key]=None
+ return value
 
 def game_totals(db,rid,owner):
  row=db.execute('SELECT metrics FROM personal_game_totals WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
- if row:return json.loads(row[0])
+ if row:return normalized_totals(json.loads(row[0]))
  record=db.execute('SELECT * FROM personal_matches WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
  if record is None:return None
  events=db.execute('SELECT * FROM personal_events WHERE replay_id=? AND owner_id=? ORDER BY frame,ordinal',(rid,owner)).fetchall()
- return summarize_events(record,events)
+ return normalized_totals(summarize_events(record,events))
 
 def cleanup(db,root,days):
  if not 1<=days<=3650:raise ValueError('Invalid cache days')
@@ -181,10 +194,16 @@ def statistics(db,owner,mode=None,map_id=None,hero_id=None):
   if rid not in selected:continue
   reached=json.loads(raw).get('growth3_round');growth.pop(rid,None)
   if reached is not None:growth[rid]=reached
- metrics_by_id={rid:json.loads(raw) for rid,raw in db.execute('SELECT replay_id,metrics FROM personal_game_totals WHERE owner_id=?',(owner,))}
+ metrics_by_id={rid:normalized_totals(json.loads(raw)) for rid,raw in db.execute('SELECT replay_id,metrics FROM personal_game_totals WHERE owner_id=?',(owner,))}
  def movement_damage(items):
-  measured=[metrics_by_id[r[0]] for r in items if r[0] in metrics_by_id and 'movement_distance' in metrics_by_id[r[0]] and 'damage_dealt' in metrics_by_id[r[0]]]
-  return {'movement_damage_analyzed':len(measured),'movement_distance':sum(r['movement_distance'] for r in measured),'damage_dealt':sum(r['damage_dealt'] for r in measured)}
+  values=[metrics_by_id.get(r[0],{}) for r in items];result={}
+  for key in ('movement_distance','damage_dealt','damage_taken','deaths','transferred_gold','max_battle_damage'):
+   found=[r[key] for r in values if r.get(key) is not None]
+   result[key+'_analyzed']=len(found)
+   result[key]=max(found) if key=='max_battle_damage' and found else sum(found)
+   result['average_'+key]=sum(found)/len(found) if found else None
+  result['movement_damage_analyzed']=sum(r.get('movement_distance') is not None and r.get('damage_dealt') is not None for r in values)
+  return result
  def aggregate(items):
   count=len(items);ranked=[r[4] for r in items if r[4] is not None];rounds=[growth[r[0]] for r in items if r[0] in growth]
   outcomes=[match_outcome(r[3],r[4]) for r in items];wins=outcomes.count('win');losses=outcomes.count('loss');decided=wins+losses;families={mode_family(r[3]) for r in items}
@@ -207,7 +226,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=6
+INSIGHTS_VERSION=7
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()

@@ -18,7 +18,18 @@ def finish_info(payload,strict=True):
    if strict:raise ValueError('Unsupported rank format')
    continue
   item=protobuf(raw);ranks[first(item,1)]=first(item,2)
- return {'replay_id':rid,'room_id':first(f,1),'finish_time':first(f,3),'version':text(first(f,12,b'')),'map_type':first(f,13),'ranks':ranks}
+ settlement={}
+ for raw in f.get(7,[]):
+  if not isinstance(raw,bytes):continue
+  pair=protobuf(raw);pid=first(pair,1);raw_value=first(pair,2,b'')
+  if not pid or not isinstance(raw_value,bytes):continue
+  v=protobuf(raw_value)
+  # A present protobuf message omits scalar zero values; absent messages remain unknown.
+  fields={'damage_dealt':3,'damage_taken':6,'deaths':5,'movement_distance':14,'transferred_gold':10,'max_battle_damage':12}
+  values={key:first(v,field) for key,field in fields.items()}
+  if any(type(n) is not int or n<0 or n>=2**63 for n in values.values()):raise ValueError('Invalid settlement statistic')
+  settlement[str(pid)]=values
+ return {'settlement':settlement,'replay_id':rid,'room_id':first(f,1),'finish_time':first(f,3),'version':text(first(f,12,b'')),'map_type':first(f,13),'ranks':ranks}
 def parse_replay(data,expected_id=None):
  if not data or len(data)>MAX_REPLAY_BYTES:raise ValueError('Replay size outside limits')
  pos=0;counts=collections.Counter();players={};room_info={};finish=None;hp=gold=0
@@ -42,4 +53,4 @@ def parse_replay(data,expected_id=None):
  if not finish:raise ValueError('Replay has no settlement')
  if expected_id is not None and finish['replay_id']!=expected_id:raise ValueError('Replay ID mismatch')
  for pid,p in players.items():p['rank']=finish['ranks'].get(pid)
- return {'schema_version':1,'replay_id':finish['replay_id'],'room_id':finish['room_id'],'map_id':room_info.get('map_id'),'map_type':finish['map_type'],'start_time':room_info.get('start_time'),'start_time_kst':kst(room_info.get('start_time')),'finish_time':finish['finish_time'],'finish_time_kst':kst(finish['finish_time']),'version':finish['version'],'participants':list(players.values()),'frame_count':sum(counts.values()),'message_counts':dict(counts),'hp_effect_entries':hp,'gold_effect_entries':gold,'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'statistics_note':'Message counts are not damage totals. Player attributes are from the last available room snapshot, not necessarily final settlement.'}
+ return {'schema_version':1,'replay_id':finish['replay_id'],'room_id':finish['room_id'],'map_id':room_info.get('map_id'),'map_type':finish['map_type'],'start_time':room_info.get('start_time'),'start_time_kst':kst(room_info.get('start_time')),'finish_time':finish['finish_time'],'finish_time_kst':kst(finish['finish_time']),'version':finish['version'],'participants':list(players.values()),'frame_count':sum(counts.values()),'message_counts':dict(counts),'hp_effect_entries':hp,'gold_effect_entries':gold,'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'settlement':finish['settlement'],'statistics_note':'Message counts are not damage totals. Player attributes are from the last available room snapshot, not necessarily final settlement.'}
