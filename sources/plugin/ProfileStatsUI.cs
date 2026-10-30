@@ -39,7 +39,7 @@ namespace AstralPersonalMod {
  public sealed class KillerItem {public string kind{get;set;}public int hero_id{get;set;}public string hero_name{get;set;}public int count{get;set;}}
  public sealed class KillerPanel {public string filter_label{get;set;}public int analyzed{get;set;}public int total{get;set;}public int unknown{get;set;}public int deaths{get;set;}public KillerItem[] items{get;set;}}
  public sealed class CardTopItem {public int card_id{get;set;}public string name{get;set;}public int count{get;set;}public string average{get;set;}}
- public sealed class ChipItem {public int rarity{get;set;}public int chip_id{get;set;}public string name{get;set;}public int count{get;set;}public string average{get;set;}}
+ public sealed class ChipItem {public string turn_label{get;set;}public int? selected_turn{get;set;}public int rarity{get;set;}public int chip_id{get;set;}public string name{get;set;}public int count{get;set;}public string average{get;set;}}
  public sealed class ChipPanel {public string key{get;set;}public string title{get;set;}public int analyzed{get;set;}public int total{get;set;}public int selections{get;set;}public int rerolls{get;set;}public ChipItem[] items{get;set;}}
  public sealed class DiceRole {public int count{get;set;}public string average{get;set;}public int[] faces{get;set;}}
  public sealed class DicePanel {public int analyzed{get;set;}public int total{get;set;}public int unknown{get;set;}public DiceRole attack{get;set;}public DiceRole defense{get;set;}public DiceRole dodge{get;set;}}
@@ -264,7 +264,7 @@ namespace AstralPersonalMod {
    if(n==0)Label(body,"확인된 칩 선택 기록이 없습니다.",360,110,680,35,19);
    for(int i=0;i<6&&chipPage*6+i<n;i++){int rank=chipPage*6+i;var item=data.items[rank];float y=70+i*48;
     Round(body,352,y,702,43,rank<3?RankOutline(rank):line,8);Round(body,354,y+2,698,39,Color.white,6);Round(body,362,y+7,32,29,rank<3?RankBadge(rank):paper,6);
-    Label(body,(rank+1).ToString(),368,y+12,28,23,14);var title=Label(body,item.name,406,y+9,520,27,16);TextColor(title,ChipRarityColor(item.rarity));NativeUI.Set(title,"tooltips",item.name);Label(body,item.count+"회",951,y+11,95,25,16);
+    Label(body,(rank+1).ToString(),368,y+12,28,23,14);var title=Label(body,item.name,406,y+9,480,27,16);TextColor(title,ChipRarityColor(item.rarity));NativeUI.Set(title,"tooltips",item.name);Label(body,(string.IsNullOrEmpty(item.turn_label)?"턴 미확인":item.turn_label),900,y+11,146,25,16);
    }
    NativeUI.Set(footer,"text",(chipPage+1)+" / "+pages+" 페이지 · 선택한 참가자의 해당 경기 칩");
   }

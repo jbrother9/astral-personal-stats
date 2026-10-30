@@ -81,7 +81,7 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
   for person in personal.appearances(db,rid,owner):
    pid=person['player_id'];analysis=by_player.get(pid);totals=analysis['totals'] if analysis else personal.game_totals(db,rid,owner) if pid==owner else None
    card=card_panel(analysis['cards'],rid+':'+str(pid),person.get('name','')+' · 이 경기 카드 순위',db=db) if analysis else None
-   if card is not None:card['chips']=personal.chips.panel([analysis['chips']] if analysis.get('chips') else [],1,rid+':'+str(pid),person.get('name','')+' · 이 경기에서 선택한 칩',db=db)
+   if card is not None:card['chips']=personal.chips.panel([analysis['chips']] if analysis.get('chips') else [],1,rid+':'+str(pid),person.get('name','')+' · 이 경기에서 선택한 칩',db=db,match=True)
    if card is not None:card['dice']=personal.dice.panel([analysis['dice']] if analysis.get('dice') else [],1)
    participants.append({**person,'hero_name':heroes.get(person['hero_id'],str(person['hero_id'])),'own':pid==owner,'available':totals is not None,'rows':metric_rows(totals or {}),'cards':card})
   totals=personal.game_totals(db,rid,owner) or {}

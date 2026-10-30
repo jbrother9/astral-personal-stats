@@ -5,7 +5,7 @@ import astral_card_stats as cards
 import astral_chip_stats as chips
 import astral_combat_dice as dice
 import astral_paths as paths
-VERSION=5
+VERSION=6
 ROOT=pathlib.Path(__file__).resolve().parent
 DEFAULTS={'player_id':0,'cache_days':7,'cache_enabled':True}
 def settings():
