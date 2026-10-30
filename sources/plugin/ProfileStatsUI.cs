@@ -104,15 +104,32 @@ namespace AstralPersonalMod {
     oldX=new float[3];oldY=new float[3];oldW=new float[3];oldH=new float[3];for(int i=0;i<3;i++){oldX[i]=NativeUI.Float(originals[i],"x");oldY[i]=NativeUI.Float(originals[i],"y");oldW[i]=NativeUI.Float(originals[i],"width");oldH[i]=NativeUI.Float(originals[i],"height");}
     Plugin.Instance.Log.LogInfo("Own-profile statistics button attached.");
    }
-   NativeUI.Set(entry,"visible",true);MatchEntryStyle();LayoutEntry();
+   NativeUI.Set(entry,"visible",true);LayoutEntry();MatchEntryStyle();
   }
   void DisposeEntry(){if(entry!=null)try{if(!NativeUI.Bool(entry,"isDisposed"))NativeUI.Call(entry,"Dispose");}catch{}entry=null;}
   void Restore(){if(originals==null||oldX==null)return;for(int i=0;i<3;i++)try{if(!NativeUI.Bool(originals[i],"isDisposed")){NativeUI.Call(originals[i],"SetXY",oldX[i],oldY[i]);NativeUI.Call(originals[i],"SetSize",oldW[i],oldH[i]);}}catch{} }
+  static void MatchProfilePart(IObject source,IObject target){
+   NativeUI.Call(target,"SetPivot",NativeUI.Float(source,"pivotX"),NativeUI.Float(source,"pivotY"),NativeUI.Bool(source,"pivotAsAnchor"));
+   NativeUI.Call(target,"SetSize",NativeUI.Float(source,"width"),NativeUI.Float(source,"height"));
+   NativeUI.Call(target,"SetScale",NativeUI.Float(source,"scaleX"),NativeUI.Float(source,"scaleY"));
+   NativeUI.Set(target,"rotation",NativeUI.Float(source,"rotation"));
+  }
   void MatchEntryStyle(){
-   // Profile instances can have runtime scaling/font changes that are absent from a fresh package button.
-   float sx=NativeUI.Float(template,"scaleX"),sy=NativeUI.Float(template,"scaleY");if(sx>0&&sy>0)NativeUI.Call(entry,"SetScale",sx,sy);
-   var source=NativeUI.Call(template,"GetTextField");var target=NativeUI.Call(entry,"GetTextField");
-   if(source!=null&&target!=null){var format=NativeUI.New("FairyGUI.TextFormat");NativeUI.Call(format,"CopyFrom",NativeUI.Get(source,"textFormat"));NativeUI.Set(target,"textFormat",format);}
+   // Package defaults omit per-instance child overrides from the profile component.
+   // Copy geometry after layout; SetSize can otherwise move pivot-anchored children.
+   MatchProfilePart(template,entry);
+   int count=(int)NativeUI.Long(entry,"numChildren");
+   for(int i=0;i<count;i++){
+    var target=NativeUI.Call(entry,"GetChildAt",i);string name=NativeUI.Text(NativeUI.Get(target,"name"));
+    if(string.IsNullOrEmpty(name))continue;var source=NativeUI.Call(template,"GetChild",name);if(source==null)continue;
+    MatchProfilePart(source,target);NativeUI.Set(target,"xMin",NativeUI.Float(source,"xMin"));NativeUI.Set(target,"yMin",NativeUI.Float(source,"yMin"));
+   }
+   var sourceText=NativeUI.Call(template,"GetTextField");var targetText=NativeUI.Call(entry,"GetTextField");
+   if(sourceText!=null&&targetText!=null){var format=NativeUI.New("FairyGUI.TextFormat");NativeUI.Call(format,"CopyFrom",NativeUI.Get(sourceText,"textFormat"));NativeUI.Set(targetText,"textFormat",format);}
+   bool horizontal=Math.Abs(oldY[0]-oldY[2])<Math.Abs(oldX[0]-oldX[2]);
+   // Use displayed bounds, not pivot coordinates, to line up the fourth button.
+   if(horizontal){float step=NativeUI.Float(originals[2],"xMin")-NativeUI.Float(originals[1],"xMin");if(step<=0)step=NativeUI.Float(template,"width")*NativeUI.Float(template,"scaleX")+8;NativeUI.Set(entry,"xMin",NativeUI.Float(template,"xMin")+step);NativeUI.Set(entry,"yMin",NativeUI.Float(template,"yMin"));}
+   else{float step=NativeUI.Float(originals[2],"yMin")-NativeUI.Float(originals[1],"yMin");if(step<=0)step=NativeUI.Float(template,"height")*NativeUI.Float(template,"scaleY")+8;NativeUI.Set(entry,"xMin",NativeUI.Float(template,"xMin"));NativeUI.Set(entry,"yMin",NativeUI.Float(template,"yMin")+step);}
   }
   void LayoutEntry(){bool horizontal=Math.Abs(oldY[0]-oldY[2])<Math.Abs(oldX[0]-oldX[2]);float min=float.MaxValue,max=float.MinValue;for(int i=0;i<3;i++){min=Math.Min(min,horizontal?oldX[i]:oldY[i]);max=Math.Max(max,horizontal?oldX[i]+oldW[i]:oldY[i]+oldH[i]);}
    float gap=8,slot=(max-min-3*gap)/4;if(slot<24)throw new InvalidOperationException("Unexpected profile button layout");var order=new List<int>{0,1,2};order.Sort((a,b)=>(horizontal?oldX[a]:oldY[a]).CompareTo(horizontal?oldX[b]:oldY[b]));
