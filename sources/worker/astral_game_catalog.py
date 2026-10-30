@@ -24,8 +24,8 @@ def load(db=None):
   if value.get('schema')!=1 or value.get('source')!='live_game_configuration' or value.get('complete') is not True:return None
   catalogs=value.get('catalogs');result={}
   if not isinstance(catalogs,dict):return None
-  for category in CATEGORIES:
-   rows=catalogs.get(category)
+  for category in CATEGORIES+('difficulties',):
+   rows=catalogs.get(category,[]) if category=='difficulties' else catalogs.get(category)
    if not isinstance(rows,list) or len(rows)>20000:return None
    entries={}
    for row in rows:

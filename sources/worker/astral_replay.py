@@ -42,7 +42,7 @@ def parse_replay(data,expected_id=None):
    f=protobuf(payload);raw=first(f,1 if op==1003 else 2,None)
    if raw is not None:
     room=protobuf(raw)
-    room_info.update(room_id=first(room,1),map_id=first(room,5),map_type=first(room,36),start_time=first(room,30))
+    room_info.update(difficulty=first(room,48),map_difficulty_id=first(room,63),room_id=first(room,1),map_id=first(room,5),map_type=first(room,36),start_time=first(room,30))
     for raw_player in room.get(9,[]):
      p=protobuf(raw_player);pid=first(p,1);hero=protobuf(first(p,10,b''))
      if pid:players[pid]={'player_id':pid,'name':text(first(p,2,b'')),'slot':first(p,6),'account_level':first(p,25),'hero_id':first(hero,2),'level':first(hero,33),'gold':first(hero,7),'hp':first(hero,14),'standing_painting_id':players.get(pid,{}).get('standing_painting_id') or first(hero,46),'equipped_hero_id':players.get(pid,{}).get('equipped_hero_id') if players.get(pid,{}).get('standing_painting_id') else first(hero,2)}
@@ -53,4 +53,4 @@ def parse_replay(data,expected_id=None):
  if not finish:raise ValueError('Replay has no settlement')
  if expected_id is not None and finish['replay_id']!=expected_id:raise ValueError('Replay ID mismatch')
  for pid,p in players.items():p['rank']=finish['ranks'].get(pid)
- return {'schema_version':1,'replay_id':finish['replay_id'],'room_id':finish['room_id'],'map_id':room_info.get('map_id'),'map_type':finish['map_type'],'start_time':room_info.get('start_time'),'start_time_kst':kst(room_info.get('start_time')),'finish_time':finish['finish_time'],'finish_time_kst':kst(finish['finish_time']),'version':finish['version'],'participants':list(players.values()),'frame_count':sum(counts.values()),'message_counts':dict(counts),'hp_effect_entries':hp,'gold_effect_entries':gold,'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'settlement':finish['settlement'],'statistics_note':'Message counts are not damage totals. Player attributes are from the last available room snapshot, not necessarily final settlement.'}
+ return {'schema_version':1,'replay_id':finish['replay_id'],'room_id':finish['room_id'],'map_id':room_info.get('map_id'),'map_type':finish['map_type'],'difficulty':room_info.get('difficulty'),'map_difficulty_id':room_info.get('map_difficulty_id'),'start_time':room_info.get('start_time'),'start_time_kst':kst(room_info.get('start_time')),'finish_time':finish['finish_time'],'finish_time_kst':kst(finish['finish_time']),'version':finish['version'],'participants':list(players.values()),'frame_count':sum(counts.values()),'message_counts':dict(counts),'hp_effect_entries':hp,'gold_effect_entries':gold,'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'settlement':finish['settlement'],'statistics_note':'Message counts are not damage totals. Player attributes are from the last available room snapshot, not necessarily final settlement.'}

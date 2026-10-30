@@ -222,14 +222,14 @@ namespace AstralPersonalMod {
    if(chipView){DrawChips(CurrentCards()?.chips);return;}
    if(cardView){DrawCards(CurrentCards());return;}
    if(cardKey!=null){DrawGroupBasic(CurrentCards());return;}
-   float[] widths=tab==3?new float[]{143,129,222,162,112,126,72}:new float[]{170,120,50,45,45,70,125,75,115,115};
+   float[] widths=tab==3?new float[]{143,129,196,150,104,112,126,72}:new float[]{170,120,50,45,45,70,125,75,115,115};
    Round(body,0,0,1054,36,accent,10);float x=12;for(int c=0;c<snapshot.columns.Length&&c<widths.Length;c++){var heading=Label(body,snapshot.columns[c],x,7,widths[c]-8,28,tab==3?17:14);TextColor(heading,Color.white);x+=widths[c];}
    if(snapshot.rows.Length==0){Label(body,"아직 수집된 경기가 없습니다.",16,82,1000,36,23,true);Label(body,"설치 후 플레이한 경기가 분석되면 이곳에 표시됩니다.",16,130,1000,30,18);}
    for(int r=0;r<snapshot.rows.Length&&r<(snapshot.page_size>0?snapshot.page_size:8);r++){
     var row=Component(body,0,StatsLayout.RowTop(r),1054,StatsLayout.RowHeight);NativeUI.Set(row,"name","astral_stats_row_"+r);NativeUI.Set(row,"opaque",true);
     Round(row,0,0,1054,StatsLayout.RowHeight,r%2==0?Color.white:new Color(.94f,.90f,.98f,1),8);
     int selectedRow=r;Bind(row,()=>Select(selectedRow));
-    x=12;for(int c=0;c<snapshot.rows[r].Length&&c<widths.Length;c++){var cell=Label(row,snapshot.rows[r][c],x,8,widths[c]-8,28,tab==3?17:14,c==0);if(tab==3&&c==4){string result=snapshot.rows[r][c];if(result.StartsWith("승리"))TextColor(cell,new Color(.12f,.47f,.28f,1));else if(result.StartsWith("패배"))TextColor(cell,pink);}x+=widths[c];}
+    x=12;for(int c=0;c<snapshot.rows[r].Length&&c<widths.Length;c++){var cell=Label(row,snapshot.rows[r][c],x,8,widths[c]-8,28,tab==3?17:14,c==0);if(tab==3&&c==5){string result=snapshot.rows[r][c];if(result.StartsWith("승리"))TextColor(cell,new Color(.12f,.47f,.28f,1));else if(result.StartsWith("패배"))TextColor(cell,pink);}x+=widths[c];}
    }
    if(tab!=3)DrawKillerSummary(snapshot.killers);
    NativeUI.Set(footer,"text",(snapshot.page+1)+" / "+snapshot.pages+" 페이지 · "+snapshot.total_rows+" 항목"+(tab==3?" · 경기를 누르면 상세 합계":" · 항목을 누르면 해당 그룹 상세 통계"));

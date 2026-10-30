@@ -5,7 +5,7 @@ import astral_card_stats as cards
 import astral_chip_stats as chips
 import astral_combat_dice as dice
 import astral_paths as paths
-VERSION=6
+VERSION=7
 ROOT=pathlib.Path(__file__).resolve().parent
 DEFAULTS={'player_id':0,'cache_days':7,'cache_enabled':True}
 def settings():
@@ -20,6 +20,7 @@ def init(db):
  hero_id INTEGER,map_id INTEGER,map_type INTEGER,rank INTEGER,duration INTEGER,
  turns INTEGER,deaths INTEGER,npc_last_hits INTEGER,effect_cards INTEGER,battle_cards INTEGER,skills INTEGER,
  analysis_version INTEGER NOT NULL,PRIMARY KEY(replay_id,owner_id));
+ CREATE TABLE IF NOT EXISTS personal_match_context(replay_id TEXT NOT NULL,owner_id INTEGER NOT NULL,difficulty INTEGER,map_difficulty_id INTEGER,PRIMARY KEY(replay_id,owner_id));
  CREATE TABLE IF NOT EXISTS personal_events(
  replay_id TEXT NOT NULL,owner_id INTEGER NOT NULL,frame INTEGER NOT NULL,ordinal INTEGER NOT NULL,
  round INTEGER,own_turn INTEGER,kind TEXT NOT NULL,detail TEXT NOT NULL,
@@ -90,6 +91,10 @@ def index(db,data,summary,owner,managed=False):
  record,events=analyze(data,summary,owner)
  card_summary=cards.analyze(data,owner)
  with db:
+  difficulty=summary.get('difficulty');map_difficulty=summary.get('map_difficulty_id')
+  if type(difficulty) is not int or not 0<=difficulty<2**31:difficulty=None
+  if type(map_difficulty) is not int or not 0<=map_difficulty<2**31:map_difficulty=None
+  db.execute('INSERT OR REPLACE INTO personal_match_context VALUES (?,?,?,?)',(summary['replay_id'],owner,difficulty,map_difficulty))
   cards.save(db,summary['replay_id'],owner,card_summary)
   save_appearances(db,summary,owner)
   save_insights(db,data,summary,owner)

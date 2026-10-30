@@ -57,14 +57,16 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
    card['basic_rows']=aggregate_metrics(r)
    card.update(key=str(tab)+':'+str(tuple(key)),title=(modes.get(key[-1],str(key[-1])) if tab==0 else label+' · '+modes.get(key[-1],str(key[-1])))+' 카드 순위');card['chips']=personal.chips.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id);card['chips'].update(key=card['key'],title=card['title'].replace('카드 순위','선택한 칩'));card['dice']=personal.dice.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id);row_cards.append(card)
  else:
-  columns=['시각 (KST)','캐릭터','맵','모드','결과','경기 시간','사망']
+  columns=['시각 (KST)','캐릭터','맵','모드','난이도','결과','경기 시간','사망']
+  difficulties=game_catalog.names('difficulties',db)
+  contexts=dict(db.execute('SELECT replay_id,difficulty FROM personal_match_context WHERE owner_id=?',(owner,)))
   where='owner_id=?';params=[owner]
   if mode is not None:where+=' AND map_type=?';params.append(mode)
   if map_id is not None:where+=' AND map_id=?';params.append(map_id)
   if hero_id is not None:where+=' AND hero_id=?';params.append(hero_id)
   for rid,finished,hero,mapcode,modecode,rank,seconds,deaths in db.execute('SELECT replay_id,finished_at,hero_id,map_id,map_type,rank,duration,deaths FROM personal_matches WHERE '+where+' ORDER BY finished_at DESC,replay_id DESC',params):
    stamp=datetime.datetime.fromtimestamp(finished,datetime.timezone(datetime.timedelta(hours=9))).strftime('%m-%d %H:%M') if finished else '-'
-   rows.append([stamp,heroes.get(hero,str(hero)),maps.get(mapcode,str(mapcode)),modes.get(modecode,str(modecode)),personal.result_label(modecode,rank),duration(seconds),number((personal.game_totals(db,rid,owner) or {}).get('deaths'))])
+   rows.append([stamp,heroes.get(hero,str(hero)),maps.get(mapcode,str(mapcode)),modes.get(modecode,str(modecode)),('-' if personal.mode_family(modecode)=='pvp' else difficulties.get(contexts[rid],'난이도 '+str(contexts[rid])) if contexts.get(rid) is not None else '미확인'),personal.result_label(modecode,rank),duration(seconds),number((personal.game_totals(db,rid,owner) or {}).get('deaths'))])
    # Detail is read only for the visible page; no replay downloads on UI requests.
    detail.append(rid)
  killers=personal.killer_statistics(db,owner,mode,map_id,hero_id)
