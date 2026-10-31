@@ -1,5 +1,5 @@
 """Background worker for the in-game plugin. No capture, Steam login or admin required."""
-import argparse,contextlib,datetime,json,os,pathlib,sqlite3,struct,sys,time,urllib.error
+import argparse,contextlib,datetime,json,os,pathlib,sqlite3,struct,sys,time,urllib.error,traceback
 import astral_worker_storage as collector
 import astral_paths as paths
 import astral_personal_data as personal
@@ -54,7 +54,7 @@ def consume_inbox(store):
 def process_one(store,downloader=None,status=None):
  row=store.db.execute("SELECT replay_id,owner_id,room_id,start_time,attempts FROM plugin_requests WHERE status='pending' AND next_try<=? ORDER BY start_time LIMIT 1",(time.time(),)).fetchone()
  if row is None:return False
- rid,owner,room,start,attempts=row
+ rid,owner,room,start,attempts=row;stage='cache_check';started=time.perf_counter()
  try:
   exists=store.db.execute('SELECT analysis_version FROM personal_matches WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
   if exists and exists[0]>=personal.VERSION and cards.has_index(store.db,rid,owner) and personal.appearances(store.db,rid,owner) and personal.has_insights(store.db,rid,owner):
@@ -66,20 +66,23 @@ def process_one(store,downloader=None,status=None):
    try:data=cache.read_bytes();summary=replay.parse_replay(data,rid)
    except (ValueError,IndexError):data=summary=None
   if data is None:
+   stage='download'
    if status:status('downloading',rid,owner)
    data=(downloader or collector.download)(rid)
    if status:status('analyzing',rid,owner)
-   summary=replay.parse_replay(data,rid)
+   stage='parse';summary=replay.parse_replay(data,rid)
+  stage='validate'
   if summary['room_id']!=room or summary['start_time']!=start:raise ValueError('Room/time mismatch')
   if owner not in [p['player_id'] for p in summary['participants']]:raise ValueError('Current account is not a replay participant')
-  store.owner_id=owner;store.enqueue(rid);store.save(data,summary,True)
+  stage='save_and_analyze';store.owner_id=owner;store.enqueue(rid);store.save(data,summary,True)
   with store.db:store.db.execute("UPDATE plugin_requests SET status='complete',error=NULL WHERE replay_id=? AND owner_id=?",(rid,owner))
-  collector.say('SAVED '+rid+' / account '+str(owner)+' / '+str(summary['frame_count'])+' messages')
+  collector.say('Replay saved / frames='+str(summary['frame_count'])+' / elapsed_ms='+str(round((time.perf_counter()-started)*1000)))
  except (OSError,ValueError,IndexError,TypeError,struct.error) as error:
   attempts+=1;delay=(5,15,60,180,600)[min(attempts-1,4)];status='failed' if attempts>=5 else 'pending'
   safe='HTTP '+str(error.code) if isinstance(error,urllib.error.HTTPError) else type(error).__name__
   with store.db:store.db.execute('UPDATE plugin_requests SET status=?,attempts=?,next_try=?,error=? WHERE replay_id=? AND owner_id=?',(status,attempts,time.time()+delay,safe,rid,owner))
-  collector.say('Replay '+rid+' / '+safe+' / '+status)
+  trace=' > '.join(pathlib.Path(f.filename).name+':'+str(f.lineno)+':'+f.name for f in traceback.extract_tb(error.__traceback__)[-6:])
+  collector.say('Retry / stage='+stage+' / error='+safe+' / errno='+str(getattr(error,'errno',None))+' / attempt='+str(attempts)+' / wait_seconds='+str(delay)+' / status='+status+' / trace='+trace)
  return True
 
 
@@ -144,7 +147,7 @@ def run(data_dir,once=False,idle_seconds=180,stop_event=None,parent_pid=None):
 
 def main():
  ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--data-dir',type=pathlib.Path,default=paths.data_dir());ap.add_argument('--once',action='store_true');ap.add_argument('--idle-seconds',type=int,default=180);ap.add_argument('--parent-pid',type=int,default=os.getppid());args=ap.parse_args();paths.set_data_dir(args.data_dir);args.data_dir.mkdir(parents=True,exist_ok=True)
- with (args.data_dir/'plugin-worker.log').open('a',encoding='utf8',buffering=1) as log,contextlib.redirect_stdout(log),contextlib.redirect_stderr(log):
+ with collector.RotatingLog(args.data_dir/'plugin-worker.log') as log,contextlib.redirect_stdout(log),contextlib.redirect_stderr(log):
   lifetime=None
   try:
    lifetime=ParentLifetime(args.parent_pid).start()

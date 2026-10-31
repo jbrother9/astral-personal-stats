@@ -7,7 +7,7 @@ try{
  $exe=Join-Path $game 'BepInEx\plugins\AstralPersonalCollector\worker\AstralStatsWorker.exe'
  if(!(Test-Path -LiteralPath $exe)){throw 'Install the distribution package first.'}
  while($true){
-  Write-Host "`nAstral Personal Stats";Write-Host '1. Open personal data folder';Write-Host '2. Import a saved replay';Write-Host '3. Change replay retention days';Write-Host '4. Run offline diagnostics';Write-Host '5. Exit'
+  Write-Host "`nAstral Personal Stats";Write-Host '1. Open personal data folder';Write-Host '2. Import a saved replay';Write-Host '3. Change replay retention days';Write-Host '4. Run offline diagnostics';Write-Host '5. Exit';Write-Host '6. Create diagnostics ZIP'
   $choice=Read-Host 'Select'
   if($choice -eq '5'){break}
   try{
@@ -21,6 +21,7 @@ try{
      if($value.PSObject.Properties['cache_days']){$value.cache_days=$days}else{$value|Add-Member -NotePropertyName cache_days -NotePropertyValue $days}
      $tmp=$file+'.part';Write-Utf8 $tmp ($value|ConvertTo-Json -Depth 6);Move-Item -LiteralPath $tmp -Destination $file -Force;Write-Host 'Retention updated. Analysed statistics are retained.'
     }
+    '6'{& (Join-Path $PSScriptRoot 'Diagnostics.ps1') -GameRoot $game}
     '4'{& $exe --self-test;if($LASTEXITCODE -ne 0){throw 'Diagnostics failed.'}}
    }
   }catch{Write-Host $_.Exception.Message -ForegroundColor Red}

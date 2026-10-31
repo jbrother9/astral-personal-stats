@@ -49,3 +49,37 @@ class WatchLock:
   except OSError:self.file.close();raise RuntimeError('Another collector is already running') from None
   return self
  def __exit__(self,*args):self.file.close()
+
+class RotatingLog:
+ """Bounded text diagnostics; logging failure must not stop collection."""
+ def __init__(self,path,limit=1024*1024):
+  self.path=pathlib.Path(path);self.limit=limit;self.file=None
+ def __enter__(self):
+  self.path.parent.mkdir(parents=True,exist_ok=True);self.file=self.path.open('a',encoding='utf8',buffering=1);return self
+ @property
+ def encoding(self):return 'utf-8'
+ def isatty(self):return False
+ def write(self,text):
+  original_length=len(text)
+  if len(text)>8192:text=text[:8192]+' [truncated]\n'
+  try:
+   self.file.flush()
+   if self.path.stat().st_size+len(text.encode('utf8'))>self.limit:
+    self.file.close();self.file=None
+    old=self.path.with_name(self.path.name+'.2');previous=self.path.with_name(self.path.name+'.1')
+    old.unlink(missing_ok=True)
+    if previous.exists():previous.replace(old)
+    self.path.replace(previous);self.file=self.path.open('a',encoding='utf8',buffering=1)
+   self.file.write(text)
+  except OSError:
+   # A reader or security software may temporarily block rotation; preserve collection.
+   if self.file is None:
+    try:self.file=self.path.open('a',encoding='utf8',buffering=1)
+    except OSError:pass
+  return original_length
+ def flush(self):
+  try:
+   if self.file:self.file.flush()
+  except OSError:pass
+ def __exit__(self,*args):
+  if self.file:self.file.close()

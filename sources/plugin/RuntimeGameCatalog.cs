@@ -36,7 +36,7 @@ namespace AstralPersonalMod {
     string json=JsonSerializer.Serialize(new{schema=1,source="live_game_configuration",complete=true,game_version=Application.version,language=language,catalogs=output});
     if(json!=lastContent){string path=Path.Combine(Plugin.Instance.DataDir,"plugin-game-catalog.json");File.WriteAllText(path+".part",json);File.Move(path+".part",path,true);lastContent=json;Plugin.Instance.Log.LogInfo("Runtime game catalogue updated.");}
     var groups=new Dictionary<int,int>();foreach(string category in new[]{"monsters","characters"})foreach(var entry in output[category])if(entry.portrait_group>0)groups[entry.id]=entry.portrait_group;portraits=groups;Generation++;lastStamp=activeStamp;Reset(now+5);
-   }catch(Exception e){Plugin.Instance.Log.LogWarning("Runtime game catalogue retry: "+e.GetType().Name);Reset(now+10);}
+   }catch(Exception e){RuntimeDiagnostics.Error("catalog.export",e);Plugin.Instance.Log.LogWarning("Runtime game catalogue retry: "+e.GetType().Name);Reset(now+10);}
   }
   void Reset(float time){sources=null;output=null;ids=null;sourceIndex=rowIndex=0;next=time;}
  }
