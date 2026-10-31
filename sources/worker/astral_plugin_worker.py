@@ -51,6 +51,12 @@ def consume_inbox(store):
    except OSError:pass
 
 
+def notify_data_changed(store,owner):
+ # Written only after analysis commits; contains no replay or account credentials.
+ target=store.root/'plugin-data-revision.json';tmp=target.with_suffix('.part')
+ tmp.write_text(json.dumps({'schema':1,'owner_id':owner,'revision':time.time_ns()}),encoding='utf8');tmp.replace(target)
+
+
 def process_one(store,downloader=None,status=None):
  row=store.db.execute("SELECT replay_id,owner_id,room_id,start_time,attempts FROM plugin_requests WHERE status='pending' AND next_try<=? ORDER BY start_time LIMIT 1",(time.time(),)).fetchone()
  if row is None:return False
@@ -76,6 +82,7 @@ def process_one(store,downloader=None,status=None):
   if owner not in [p['player_id'] for p in summary['participants']]:raise ValueError('Current account is not a replay participant')
   stage='save_and_analyze';store.owner_id=owner;store.enqueue(rid);store.save(data,summary,True)
   with store.db:store.db.execute("UPDATE plugin_requests SET status='complete',error=NULL WHERE replay_id=? AND owner_id=?",(rid,owner))
+  notify_data_changed(store,owner)
   collector.say('Replay saved / frames='+str(summary['frame_count'])+' / elapsed_ms='+str(round((time.perf_counter()-started)*1000)))
  except (OSError,ValueError,IndexError,TypeError,struct.error) as error:
   attempts+=1;delay=(5,15,60,180,600)[min(attempts-1,4)];status='failed' if attempts>=5 else 'pending'
@@ -96,6 +103,7 @@ def backfill_card_cache(store,state,status=None):
   data=file.read_bytes();summary=replay.parse_replay(data,rid)
   if owner not in [p['player_id'] for p in summary['participants']]:continue
   personal.index(store.db,data,summary,owner)
+  notify_data_changed(store,owner)
   return True
  return False
 
@@ -111,11 +119,19 @@ def heartbeat(store):
   return state
  except (OSError,ValueError):return None
 
+def publish_ui_if_requested(store,state,last_signature):
+ try:
+  info=(store.root/'plugin-ui-request.json').stat();signature=(info.st_mtime_ns,info.st_size)
+  if signature!=last_signature and overlay.publish(store,state):return signature
+ except OSError:pass
+ return last_signature
+
+
 def run(data_dir,once=False,idle_seconds=180,stop_event=None,parent_pid=None):
  store=collector.Store(data_dir);init(store)
  try:
   with collector.WatchLock(store.root/'plugin-worker.lock'):
-   collector.say('Plugin worker started. No packet capture.');last_seen=time.monotonic();last_cleanup=0;last_ui=0
+   collector.say('Plugin worker started. No packet capture.');last_seen=time.monotonic();last_cleanup=0;last_ui_signature=None
    while True:
     if stop_event is not None and stop_event.is_set():collector.say('Game process ended; pending requests retained for next launch.');break
     state=heartbeat(store)
@@ -129,8 +145,7 @@ def run(data_dir,once=False,idle_seconds=180,stop_event=None,parent_pid=None):
      except (OSError,ValueError,IndexError,struct.error):collector.say('Card cache backfill skipped an unreadable replay.')
     report()
     if active:last_seen=time.monotonic()
-    if time.monotonic()-last_ui>3:
-     overlay.publish(store,state);last_ui=time.monotonic()
+    last_ui_signature=publish_ui_if_requested(store,state,last_ui_signature)
     if time.monotonic()-last_cleanup>60:
      prefs=personal.settings()
      if prefs['cache_enabled']:personal.cleanup(store.db,store.root,int(prefs['cache_days']))

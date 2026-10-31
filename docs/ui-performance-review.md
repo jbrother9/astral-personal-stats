@@ -22,3 +22,9 @@ Build, visibility API checks, deep/wide search, hidden/disposed/cross-scene cach
 ## 0.8.9 lobby entry
 
 The small entry now resides on the root while UI.UIHomePanel is visible, between the profile and currency display. Profile discovery is retained only for history observation; it no longer creates or styles an entry. The modal blocks the lobby and uses a root shield. Lobby visibility and account changes govern cleanup. Real-game placement/click verification remains pending.
+
+## 0.8.12 request-based statistics and direct UI references
+
+Periodic tree traversal is removed. The existing Unity frame callback reads UIManager.bottomMenuPanel.ui and the cached profile window directly; a new live bottom component gets one entry. This is reference observation, not a construction hook: the late-loaded FairyGUI assembly has no generated binding in this runtime. No additional native hooks were added.
+
+The UI requests data on open, scope/page change and manual refresh. Committed replay analysis/backfill writes an atomic data revision marker. Open windows check its file signature and coalesce changes for 350 ms; closed windows skip statistics. Request IDs bind responses to their current filter request. Only pending responses are polled (250 ms, capped at 30 seconds). The worker publishes only when the request signature changes; the former three-second recomputation and fifteen-second request loop were removed. Small collection state reads remain separate.

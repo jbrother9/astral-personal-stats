@@ -110,8 +110,10 @@ def publish(store,state):
   if file.stat().st_size>4096:return False
   request=json.loads(file.read_text(encoding='utf-8-sig'))
   if request.get('owner_id')!=state['owner_id'] or not 0<=time.time()-request.get('updated_at',0)<=60:return False
+  if request.get('visible') is False:return True
   tab=request.get('tab',0);page=request.get('page',0);mode=request.get('mode',-1);map_id=request.get('map',-1);hero_id=request.get('hero',-1);difficulty=request.get('difficulty',-1)
   if any(type(v) is not int for v in (tab,page,mode,map_id,hero_id,difficulty)) or tab not in range(4) or not 0<=page<=100000 or difficulty < -2 or difficulty>=2**31:return False
   result=make_snapshot(store.db,state['owner_id'],None if mode==-1 else mode,None if map_id==-1 else map_id,tab,page,None if hero_id==-1 else hero_id,None if difficulty==-1 else difficulty)
+  result['request_id']=request.get('request_id',0)
   target=store.root/'plugin-ui-snapshot.json';temp=target.with_suffix('.part');temp.write_text(json.dumps(result,ensure_ascii=False),encoding='utf8');temp.replace(target);return True
  except (OSError,ValueError,TypeError,sqlite3.Error,OverflowError,IndexError,KeyError):return False
