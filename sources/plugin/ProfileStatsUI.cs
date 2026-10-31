@@ -99,7 +99,7 @@ namespace AstralPersonalMod {
   StatsSnapshot snapshot;bool open;float nextScan,nextRead,nextRequest,nextError,nextDiagnostic;long owner;int tab=3,mode=-1,map=-1,hero=-1,difficulty=-1,page;int selected=-1;
   bool profileFound;long profilePlayerId;
   IObject lobby,cachedLobby;float lobbyWidth=-1,lobbyHeight=-1;
-  readonly ProfileTreeSearch<IObject> lobbySearch=new ProfileTreeSearch<IObject>(SearchVisible,node=>NativeUI.TypeName(node)=="UI.UIHomePanel",SearchChildren,SearchChild,SearchParent,NativeUI.Same);
+  readonly ProfileTreeSearch<IObject> lobbySearch=new ProfileTreeSearch<IObject>(SearchVisible,node=>NativeUI.TypeName(node)=="UI.UIBottomMenuPanel",SearchChildren,SearchChild,SearchParent,NativeUI.Same);
   IObject cachedProfile;bool entryLayoutApplied,entryStampValid,windowHidden=true;
   bool styleBold;int styleScreenWidth,styleScreenHeight,styleFontSize;long styleGeneration=-1;float styleWidth,styleHeight,styleScaleX,styleScaleY;string styleFont;
   float nextFit;int shieldOrder=int.MinValue;
@@ -118,7 +118,7 @@ namespace AstralPersonalMod {
   const float W=StatsLayout.Width,H=StatsLayout.Height;
   public void Update(){float now=Time.realtimeSinceStartup;try{
    if(owner!=AccountId){CloseStats();Restore();DisposeEntry();if(window!=null){NativeUI.Call(window,"Dispose");window=null;}profile=main=entry=template=null;clicks.Clear();paints.Clear();hover=IntPtr.Zero;pressed=IntPtr.Zero;modeChoices=mapChoices=heroChoices=difficultyChoices=null;owner=AccountId;snapshot=null;cachedProfile=null;profileSearch.Clear();lobby=cachedLobby=null;lobbySearch.Clear();lobbyWidth=lobbyHeight=-1;entryStampValid=false;snapshotPresentation=null;placement.Invalidate();mode=map=hero=difficulty=-1;page=0;tab=3;}
-   if(now>=nextScan){nextScan=now+1;Scan();}if(now>=nextDiagnostic){Diagnostic(open?"open":entry!=null&&NativeUI.Bool(entry,"visible")?"button_attached":owner>0?"waiting_for_own_profile":"waiting_for_login");nextDiagnostic=now+10;}
+   if(now>=nextScan){nextScan=now+1;Scan();}if(now>=nextDiagnostic){Diagnostic(open?"open":entry!=null&&NativeUI.Bool(entry,"visible")?"button_attached":owner>0?"waiting_for_bottom_menu":"waiting_for_login");nextDiagnostic=now+10;}
    if(open){if(catalogGeneration!=RuntimeGameCatalog.Generation){catalogGeneration=RuntimeGameCatalog.Generation;Render();}portraits.Update();if(now>=nextCollectionRead){nextCollectionRead=now+1;ReadCollectionStatus();}if(!SearchVisible(lobby)){CloseStats();return;}if(now>=nextRequest){Request();nextRequest=now+15;}if(now>=nextRead){nextRead=now+1;ReadSnapshot();}if(now>=nextFit){nextFit=now+.1f;Fit();}}
   }catch(Exception e){RuntimeDiagnostics.Error("profile.update",e);if(now>=nextError){Plugin.Instance.Log.LogWarning("Profile statistics UI retry: "+e.GetType().Name+" / "+e.Message);Diagnostic("ui_retry");nextError=now+15;}}}
   void Diagnostic(string state){try{File.WriteAllText(Path.Combine(Plugin.Instance.DataDir,"plugin-ui-state.json"),"{\"owner_id\":"+owner+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+state+"\",\"profile_found\":"+(profileFound?"true":"false")+",\"profile_player_id\":"+profilePlayerId+",\"window_showing\":"+(window!=null&&NativeUI.Bool(window,"isShowing")?"true":"false")+",\"window_on_stage\":"+(window!=null&&NativeUI.Bool(window,"onStage")?"true":"false")+",\"window_order\":"+NativeUI.Long(window,"sortingOrder")+",\"profile_order\":"+NativeUI.Long(profile,"sortingOrder")+",\"shield_on_stage\":"+(shield!=null&&NativeUI.Bool(shield,"onStage")?"true":"false")+",\"profile_touchable\":"+(NativeUI.Bool(profile,"touchable")?"true":"false")+"}");}catch{}}
@@ -128,22 +128,25 @@ namespace AstralPersonalMod {
    RuntimeDiagnostics.Search(visited,scanStarted,GC.GetAllocatedBytesForCurrentThread()-scanAllocated,profileSearch.UsedCache);
    profileFound=found!=null;AnyProfileVisible=found!=null;profilePlayerId=NativeUI.Long(NativeUI.Get(found,"playerCareer"),"playerId");
    if(found!=null&&profilePlayerId==owner)Plugin.ObserveOwnHistory(NativeUI.Get(found,"playerCareer"));
-   var home=lobbySearch.Find(root,cachedLobby,out int homeVisited);cachedLobby=home;
+   var home=lobbySearch.Find(root,cachedLobby,out int homeVisited);if(home!=null)cachedLobby=home;
    if(lobbySearch.Pending)nextScan=Math.Min(nextScan,Time.realtimeSinceStartup+.05f);
    if(home==null){if(entry!=null&&!NativeUI.Bool(entry,"isDisposed"))NativeUI.Set(entry,"visible",false);CloseStats();return;}
    if(!NativeUI.Same(lobby,home)||entry==null||NativeUI.Bool(entry,"isDisposed")){
     DisposeEntry();lobby=home;profile=null;lobbyWidth=lobbyHeight=-1;
-    var nativeButton=NativeUI.Get(home,"btn_Dictionary");var nativeText=NativeUI.Call(nativeButton,"GetTextField");font=NativeUI.Get(NativeUI.Get(nativeText,"textFormat"),"font");
-    entry=NewButton(root,"전적","OpenStats",0,0,80,38);NativeUI.Set(entry,"name","astral_personal_stats_lobby");
+    var functions=NativeUI.Get(home,"list_Function");if(functions!=null&&NativeUI.Long(functions,"numChildren")>0){var nativeButton=NativeUI.Call(functions,"GetChildAt",0);var nativeText=NativeUI.Call(nativeButton,"GetTextField");font=NativeUI.Get(NativeUI.Get(nativeText,"textFormat"),"font");}
+    entry=NewButton(home,"전적","OpenStats",0,0,80,38);NativeUI.Set(entry,"name","astral_personal_stats_lobby");
     RuntimeDiagnostics.Event("lobby_button_created");
    }
-   NativeUI.Set(entry,"visible",true);LayoutLobbyEntry(root);
+   NativeUI.Set(entry,"visible",true);LayoutLobbyEntry(home);
   }
-  void LayoutLobbyEntry(IObject root){
-   float rw=NativeUI.Float(root,"width"),rh=NativeUI.Float(root,"height");if(rw<=0||rh<=0||rw==lobbyWidth&&rh==lobbyHeight)return;
-   float scale=Math.Min(rw/2048f,rh/1152f);float w=80*scale,h=38*scale;
-   NativeUI.Call(entry,"SetScale",scale,scale);NativeUI.Call(entry,"SetXY",rw*.3125f-w/2,rh-72*scale);
-   lobbyWidth=rw;lobbyHeight=rh;
+  void LayoutLobbyEntry(IObject bottom){
+   var tokens=NativeUI.Get(bottom,"list_Token");if(tokens==null)return;
+   float x=NativeUI.Float(tokens,"x"),y=NativeUI.Float(tokens,"y"),h=NativeUI.Float(tokens,"height");
+   float scale=Math.Max(.5f,Math.Min(1.5f,h/64f));
+   float px=x-92*scale,py=y+(h-38*scale)/2;
+   if(px==lobbyWidth&&py==lobbyHeight)return;
+   NativeUI.Call(entry,"SetScale",scale,scale);NativeUI.Call(entry,"SetXY",px,py);NativeUI.Set(entry,"sortingOrder",1);
+   lobbyWidth=px;lobbyHeight=py;RuntimeDiagnostics.Event("lobby_button_positioned");
   }
 
   void DisposeEntry(){
@@ -246,7 +249,7 @@ namespace AstralPersonalMod {
    diceView=false;chipView=false;selectedPlayer=0;portraits.Clear();cardView=false;cardKey=null;
    try{CloseDropdown();}finally{ReleaseModal();open=false;selected=-1;if(window==null)windowHidden=true;else try{if(!NativeUI.Bool(window,"isDisposed"))NativeUI.Call(window,"Hide");windowHidden=true;}catch{}}
   }
-  void EnsureFrontOrder(){if(window==null||lobby==null)return;long order=NativeUI.Long(lobby,"sortingOrder");int target=(int)Math.Min(int.MaxValue-1,Math.Max(0,order)+2);if(NativeUI.Long(window,"sortingOrder")!=target)NativeUI.Set(window,"sortingOrder",target);}
+  void EnsureFrontOrder(){if(window==null||lobby==null)return;long order=0;var ancestor=lobby;for(int depth=0;ancestor!=null&&depth<32;depth++,ancestor=NativeUI.Get(ancestor,"parent"))order=Math.Max(order,NativeUI.Long(ancestor,"sortingOrder"));int target=(int)Math.Min(int.MaxValue-1,Math.Max(0,order)+2);if(NativeUI.Long(window,"sortingOrder")!=target)NativeUI.Set(window,"sortingOrder",target);}
   void BlockProfile(){if(blockedProfile!=null||lobby==null)return;blockedProfile=lobby;savedProfileTouchable=NativeUI.Bool(lobby,"touchable");NativeUI.Set(lobby,"touchable",false);}
   void ReleaseModal(){if(shield!=null){try{NativeUI.Call(shield,"Dispose");}catch{}shield=shieldPaint=null;shieldWidth=shieldHeight=0;shieldOrder=int.MinValue;}if(blockedProfile!=null){try{if(!NativeUI.Bool(blockedProfile,"isDisposed"))NativeUI.Set(blockedProfile,"touchable",savedProfileTouchable);}catch{}blockedProfile=null;}}
   void Fit(){

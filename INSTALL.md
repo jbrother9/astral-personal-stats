@@ -1,4 +1,4 @@
-# Astral Personal Stats 0.8.9 beta 1 (Windows x64)
+# Astral Personal Stats 0.8.10 beta 1 (Windows x64)
 
 로비 하단의 프로필과 디스크 재화 사이에 작은 전적 버튼을 배치했습니다. 프로필 안의 전적 버튼은 제거했습니다.
 
