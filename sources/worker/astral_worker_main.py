@@ -1,9 +1,11 @@
 """Standalone plugin worker and offline diagnostics entry point."""
 import argparse,json,pathlib,sys,os
-VERSION='0.8.5'
+VERSION='0.8.6'
 
 def self_test(base=None):
- import tempfile,struct
+ import tempfile,struct,ssl
+ tls=ssl.create_default_context()
+ assert tls.check_hostname and tls.verify_mode==ssl.CERT_REQUIRED
  import astral_paths as paths
  context=tempfile.TemporaryDirectory(prefix='astral-selftest-',dir=base)
  with context as folder:
@@ -33,7 +35,7 @@ def self_test(base=None):
    assert aggregate(store.db,owner)['attack']['average']=='6.00'
    assert not any(name in sys.modules for name in ('astral_account_query','astral_npcap','astral_collector'))
   finally:store.close()
- return {'ok':True,'version':VERSION,'frozen':bool(getattr(sys,'frozen',False)),'checks':['sqlite','replay_analysis','card_chip_dice','worker_queue','overlay','no_capture_or_login_modules']}
+ return {'ok':True,'version':VERSION,'frozen':bool(getattr(sys,'frozen',False)),'checks':['verified_https_context','sqlite','replay_analysis','card_chip_dice','worker_queue','overlay','no_capture_or_login_modules']}
 
 def main():
  if '--version' in sys.argv:print(VERSION);return
@@ -41,6 +43,15 @@ def main():
   ap=argparse.ArgumentParser();ap.add_argument('--self-test',action='store_true');ap.add_argument('--data-dir',type=pathlib.Path);args=ap.parse_args()
   if args.data_dir:args.data_dir.mkdir(parents=True,exist_ok=True)
   print(json.dumps(self_test(args.data_dir),ensure_ascii=False));return
+ if '--check-download' in sys.argv:
+  ap=argparse.ArgumentParser();ap.add_argument('--check-download',required=True);args=ap.parse_args()
+  import astral_worker_storage as storage,astral_replay as replay
+  try:
+   raw=storage.download(args.check_download);summary=replay.parse_replay(raw,args.check_download)
+   print(json.dumps({'ok':True,'bytes':len(raw),'frames':summary['frame_count']}))
+  except Exception:
+   import traceback;traceback.print_exc();raise SystemExit(1)
+  return
  if '--import-replay' in sys.argv:
   import astral_paths as paths
   ap=argparse.ArgumentParser();ap.add_argument('--import-replay',required=True,type=pathlib.Path);ap.add_argument('--data-dir',type=pathlib.Path,default=paths.data_dir());args=ap.parse_args();paths.set_data_dir(args.data_dir)
