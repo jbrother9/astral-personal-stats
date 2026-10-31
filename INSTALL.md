@@ -1,4 +1,4 @@
-# Astral Personal Stats 0.8.12 beta 1 (Windows x64)
+# Astral Personal Stats 0.8.13 beta 1 (Windows x64)
 
 UI 트리 검색을 제거하고 하단 메뉴 참조를 통해 버튼을 한 번 연결합니다. 통계는 창 열기, 조건 변경, 분석 완료, 수동 새로고침 때 갱신합니다. 마우스를 올리면 연두색으로 강조됩니다. 프로필 안의 전적 버튼은 제거했습니다.
 

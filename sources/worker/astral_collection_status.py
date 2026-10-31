@@ -16,7 +16,7 @@ def publish(store,state,phase=None,replay_id=None,job_owner=None):
  elif failed:label='확인 필요 · '+str(failed)+'건';kind='attention'
  elif state.get('history_status')=='requesting':label='최근 경기 확인 중';kind='working'
  elif state.get('history_status')=='waiting_for_lobby':label='최근 경기 확인 대기';kind='waiting'
- elif state.get('room_state')==25:label='플레이 중 · 종료 후 수집';kind='waiting'
+ elif state.get('is_playing',state.get('room_state')==25):label='플레이 중 · 종료 후 수집';kind='waiting'
  elif indexed:label='수집 완료';kind='ready'
  else:label='새 경기 수집 대기';kind='waiting'
  value={'schema':1,'owner_id':owner,'heartbeat':int(time.time()),'kind':kind,'label':label,'pending':pending,'failed':failed,'indexed':indexed}
