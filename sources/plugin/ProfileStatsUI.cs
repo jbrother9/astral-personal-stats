@@ -75,7 +75,7 @@ namespace AstralPersonalMod {
   IObject[] tabs;IObject[] originals;float[] oldX,oldY,oldW,oldH;
   sealed class ClickBinding { internal IObject Button;internal Action Action; }
   readonly Dictionary<IntPtr,ClickBinding> clicks=new Dictionary<IntPtr,ClickBinding>();
-  sealed class ButtonPaint {internal IObject Background,Text;internal bool Selected,Primary;}
+  sealed class ButtonPaint {internal IObject Background,Text;internal IObject[] MenuBars;internal bool Selected,Primary;}
   readonly Dictionary<IntPtr,ButtonPaint> paints=new Dictionary<IntPtr,ButtonPaint>();
   IntPtr hover;float nextHover;
 
@@ -134,16 +134,23 @@ namespace AstralPersonalMod {
    if(!NativeUI.Same(lobby,home)||entry==null||NativeUI.Bool(entry,"isDisposed")){
     DisposeEntry();lobby=home;profile=null;lobbyWidth=lobbyHeight=-1;
     var functions=NativeUI.Get(home,"list_Function");if(functions!=null&&NativeUI.Long(functions,"numChildren")>0){var nativeButton=NativeUI.Call(functions,"GetChildAt",0);var nativeText=NativeUI.Call(nativeButton,"GetTextField");font=NativeUI.Get(NativeUI.Get(nativeText,"textFormat"),"font");}
-    entry=NewButton(home,"전적","OpenStats",0,0,80,38);NativeUI.Set(entry,"name","astral_personal_stats_lobby");
+    entry=NewLobbyEntry(home);NativeUI.Set(entry,"name","astral_personal_stats_lobby");
     RuntimeDiagnostics.Event("lobby_button_created");
    }
    NativeUI.Set(entry,"visible",true);LayoutLobbyEntry(home);
+  }
+  IObject NewLobbyEntry(IObject parent){
+   var button=Component(parent,0,0,72,86);NativeUI.Set(button,"opaque",true);NativeUI.Set(button,"tooltips","내 전적");
+   var text=Label(button,"전적",0,0,72,30,24);TextColor(text,Color.white);
+   var format=NativeUI.Get(text,"textFormat");NativeUI.Set(format,"align",1);NativeUI.Set(text,"textFormat",format);
+   var bars=new IObject[3];for(int i=0;i<3;i++){float height=18+i*12;bars[i]=Round(button,18+i*13,77-height,9,height,Color.white,3);}
+   paints[button.Pointer]=new ButtonPaint{Text=text,MenuBars=bars};Bind(button,"OpenStats");return button;
   }
   void LayoutLobbyEntry(IObject bottom){
    var tokens=NativeUI.Get(bottom,"list_Token");if(tokens==null)return;
    float x=NativeUI.Float(tokens,"x"),y=NativeUI.Float(tokens,"y"),h=NativeUI.Float(tokens,"height");
    float scale=Math.Max(.5f,Math.Min(1.5f,h/64f));
-   float px=x-92*scale,py=y+(h-38*scale)/2;
+   float px=x-84*scale,py=y+(h-86*scale)/2;
    if(px==lobbyWidth&&py==lobbyHeight)return;
    NativeUI.Call(entry,"SetScale",scale,scale);NativeUI.Call(entry,"SetXY",px,py);NativeUI.Set(entry,"sortingOrder",1);
    lobbyWidth=px;lobbyHeight=py;RuntimeDiagnostics.Event("lobby_button_positioned");
@@ -219,10 +226,10 @@ namespace AstralPersonalMod {
   }
   IObject Round(IObject parent,float x,float y,float w,float h,Color fill,float radius){var graph=NativeUI.New("FairyGUI.GGraph");NativeUI.Call(graph,"SetXY",x,y);NativeUI.Call(graph,"SetSize",w,h);var radii=new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<float>(new float[]{radius,radius,radius,radius});NativeUI.Call(graph,"DrawRoundRect",w,h,fill,new IObject(radii.Pointer));NativeUI.Set(graph,"touchable",false);NativeUI.Call(parent,"AddChild",graph);return graph;}
   void TextColor(IObject text,Color color){var format=NativeUI.Get(text,"textFormat");NativeUI.Set(format,"color",color);NativeUI.Set(text,"textFormat",format);}
-  void Paint(IntPtr key,bool over){if(!paints.TryGetValue(key,out var p))return;NativeUI.Set(p.Background,"color",p.Selected?lime:p.Primary?(over?pink:accent):(over?rose:Color.white));TextColor(p.Text,p.Primary&&!p.Selected?Color.white:ink);}
+  void Paint(IntPtr key,bool over){if(!paints.TryGetValue(key,out var p))return;if(p.MenuBars!=null){var color=over?lime:Color.white;TextColor(p.Text,color);foreach(var bar in p.MenuBars)NativeUI.Set(bar,"color",color);return;}NativeUI.Set(p.Background,"color",p.Selected?lime:p.Primary?(over?pink:accent):(over?rose:Color.white));TextColor(p.Text,p.Primary&&!p.Selected?Color.white:ink);}
   void SetButtonText(IObject b,string title){if(b!=null&&paints.TryGetValue(b.Pointer,out var p))NativeUI.Set(p.Text,"text",title);}
   void SetButtonSelected(IObject b,bool selected){if(b!=null&&paints.TryGetValue(b.Pointer,out var p)){if(p.Selected==selected)return;p.Selected=selected;Paint(b.Pointer,hover==b.Pointer);}}
-  void PollHover(){if(!open||Time.realtimeSinceStartup<nextHover)return;nextHover=Time.realtimeSinceStartup+.06f;var hit=NativeUI.Get(NativeUI.Static("FairyGUI.GRoot","inst"),"touchTarget");IntPtr target=IntPtr.Zero;for(int i=0;hit!=null&&i<24;i++,hit=NativeUI.Get(hit,"parent"))if(paints.ContainsKey(hit.Pointer)){target=hit.Pointer;break;}if(target==hover)return;var old=hover;hover=target;if(old!=IntPtr.Zero)Paint(old,false);if(target!=IntPtr.Zero)Paint(target,true);}
+  void PollHover(){if((!open&&entry==null)||Time.realtimeSinceStartup<nextHover)return;nextHover=Time.realtimeSinceStartup+.06f;var hit=NativeUI.Get(NativeUI.Static("FairyGUI.GRoot","inst"),"touchTarget");IntPtr target=IntPtr.Zero;for(int i=0;hit!=null&&i<24;i++,hit=NativeUI.Get(hit,"parent"))if(paints.ContainsKey(hit.Pointer)){target=hit.Pointer;break;}if(target==hover)return;var old=hover;hover=target;if(old!=IntPtr.Zero)Paint(old,false);if(target!=IntPtr.Zero)Paint(target,true);}
   IObject Component(IObject parent,float x,float y,float w,float h){var c=NativeUI.New("FairyGUI.GComponent");NativeUI.Call(c,"SetXY",x,y);NativeUI.Call(c,"SetSize",w,h);if(parent!=null)NativeUI.Call(parent,"AddChild",c);return c;}
   void Rect(IObject parent,float x,float y,float w,float h,Color fill){var graph=NativeUI.New("FairyGUI.GGraph");NativeUI.Call(graph,"SetXY",x,y);NativeUI.Call(graph,"SetSize",w,h);NativeUI.Call(graph,"DrawRect",w,h,1,line,fill);NativeUI.Set(graph,"touchable",false);NativeUI.Call(parent,"AddChild",graph);}
   IObject Label(IObject parent,string value,float x,float y,float w,float h,int size=19,bool bold=false){var t=NativeUI.New("FairyGUI.GTextField");var format=NativeUI.New("FairyGUI.TextFormat");if(font!=null)NativeUI.Set(format,"font",font);NativeUI.Set(format,"size",size);NativeUI.Set(format,"color",ink);NativeUI.Set(format,"bold",bold&&size>=24);NativeUI.Set(t,"textFormat",format);NativeUI.Set(t,"autoSize",3);NativeUI.Set(t,"singleLine",true);NativeUI.Set(t,"touchable",false);NativeUI.Call(t,"SetXY",x,y);NativeUI.Call(t,"SetSize",w,h);NativeUI.Set(t,"text",value??"");NativeUI.Call(parent,"AddChild",t);return t;}
