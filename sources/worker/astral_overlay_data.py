@@ -40,22 +40,30 @@ def card_panel(value,key,title,db=None):
   panel[kind]=[{'card_id':int(id),'name':resolve_name(int(id)),'count':count,'average':str(count)} for id,count in sorted(value.get(kind,{}).items(),key=lambda x:(-x[1],int(x[0])))]
  return panel
 
-def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
- heroes,maps,modes=references(db);stats=personal.statistics(db,owner,mode,map_id,hero_id)
+def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None,difficulty=None):
+ if mode is not None and personal.mode_family(mode)=='pvp':difficulty=None
+ heroes,maps,modes=references(db);stats=personal.statistics(db,owner,mode,map_id,hero_id,difficulty)
+ difficulty_names=game_catalog.names('difficulties',db)
+ def difficulty_label(value):return '미확인' if value is None or value==-2 else difficulty_names.get(value,'난이도 '+str(value))
+ observed=db.execute('SELECT m.map_type,c.difficulty FROM personal_matches m LEFT JOIN personal_match_context c ON c.replay_id=m.replay_id AND c.owner_id=m.owner_id WHERE m.owner_id=?',(owner,)).fetchall()
+ pve_difficulties={value for modecode,value in observed if personal.mode_family(modecode)=='pve'}
+ difficulty_options=[{'id':-1,'label':'전체 난이도'}]+[{'id':value,'label':difficulty_label(value)} for value in sorted(v for v in pve_difficulties if v is not None)]+([{'id':-2,'label':'미확인'}] if None in pve_difficulties else [])
  options=db.execute('SELECT DISTINCT map_type,map_id,hero_id FROM personal_matches WHERE owner_id=? ORDER BY map_type,map_id',(owner,)).fetchall()
- mode_options=[{'id':-1,'label':'전체 모드'}]+[{'id':v,'label':modes.get(v,f'모드 {v}')} for v in sorted({r[0] for r in options if r[0] is not None})]
+ mode_options=[{'id':-1,'label':'전체 모드'}]+[{'id':v,'label':modes.get(v,f'모드 {v}'),'is_pvp':personal.mode_family(v)=='pvp'} for v in sorted({r[0] for r in options if r[0] is not None})]
  map_options=[{'id':-1,'label':'전체 맵'}]+[{'id':v,'label':maps.get(v,f'맵 {v}')} for v in sorted({r[1] for r in options if r[1] is not None})]
  hero_options=[{'id':-1,'label':'전체 캐릭터'}]+[{'id':v,'label':heroes.get(v,f'캐릭터 {v}')} for v in sorted({r[2] for r in options if r[2] is not None})]
  aggregate=stats['overall'];count=aggregate['matches'];rows=[];columns=[];detail=[];row_cards=[]
  def aggregate_row(r,label,modecode):return [label,modes.get(modecode,f'모드 {modecode}'),str(r['matches']),str(r['wins']),str(r['losses']),personal.rate_label(r['win_rate']),duration(r['average_duration']),number(r['average_deaths']),str(r['movement_distance']) if r['movement_damage_analyzed']==r['matches'] else '분석 '+str(r['movement_damage_analyzed'])+'/'+str(r['matches']),str(r['damage_dealt']) if r['movement_damage_analyzed']==r['matches'] else '분석 '+str(r['movement_damage_analyzed'])+'/'+str(r['matches'])]
  if tab in (0,1,2):
-  columns=['항목','모드','경기','승','패','승률','평균 시간','평균 사망','이동 합계','피해 합계']
-  groups=stats[('by_mode','by_map','by_hero')[tab]]
+  columns=['난이도' if tab==0 else '항목','모드','경기','승','패','승률','평균 시간','평균 사망','이동 합계','피해 합계']
+  groups=stats[('by_difficulty','by_map','by_hero')[tab]]
+  if tab==0:groups=sorted(groups,key=lambda r:(r['key'][-1],r['key'][0] is None,r['key'][0] or 0))
   for r in groups:
-   key=r['key'];label='전체' if tab==0 else (maps if tab==1 else heroes).get(key[0],str(key[0]));rows.append(aggregate_row(r,label,key[-1]))
-   card=card_ranking(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id)
+   key=r['key'];label=('-' if personal.mode_family(key[-1])!='pve' else difficulty_label(key[0])) if tab==0 else (maps if tab==1 else heroes).get(key[0],str(key[0]));rows.append(aggregate_row(r,label,key[-1]))
+   group_difficulty=(-2 if key[0] is None and personal.mode_family(key[-1])=='pve' else key[0]) if tab==0 else difficulty
+   card=card_ranking(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id,difficulty=group_difficulty)
    card['basic_rows']=aggregate_metrics(r)
-   card.update(key=str(tab)+':'+str(tuple(key)),title=(modes.get(key[-1],str(key[-1])) if tab==0 else label+' · '+modes.get(key[-1],str(key[-1])))+' 카드 순위');card['chips']=personal.chips.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id);card['chips'].update(key=card['key'],title=card['title'].replace('카드 순위','선택한 칩'));card['dice']=personal.dice.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id);row_cards.append(card)
+   card.update(key=str(tab)+':'+str(tuple(key)),title=(label+' · '+modes.get(key[-1],str(key[-1])))+' 카드 순위');card['chips']=personal.chips.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id,difficulty=group_difficulty);card['chips'].update(key=card['key'],title=card['title'].replace('카드 순위','선택한 칩'));card['dice']=personal.dice.aggregate(db,owner,mode=key[-1],map_id=key[0] if tab==1 else map_id,hero_id=key[0] if tab==2 else hero_id,difficulty=group_difficulty);row_cards.append(card)
  else:
   columns=['시각 (KST)','캐릭터','맵','모드','난이도','결과','경기 시간','사망']
   difficulties=game_catalog.names('difficulties',db)
@@ -64,13 +72,15 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
   if mode is not None:where+=' AND map_type=?';params.append(mode)
   if map_id is not None:where+=' AND map_id=?';params.append(map_id)
   if hero_id is not None:where+=' AND hero_id=?';params.append(hero_id)
+  extra,args=personal.difficulty_clause('personal_matches',difficulty);where+=extra;params+=args
   for rid,finished,hero,mapcode,modecode,rank,seconds,deaths in db.execute('SELECT replay_id,finished_at,hero_id,map_id,map_type,rank,duration,deaths FROM personal_matches WHERE '+where+' ORDER BY finished_at DESC,replay_id DESC',params):
    stamp=datetime.datetime.fromtimestamp(finished,datetime.timezone(datetime.timedelta(hours=9))).strftime('%m-%d %H:%M') if finished else '-'
    rows.append([stamp,heroes.get(hero,str(hero)),maps.get(mapcode,str(mapcode)),modes.get(modecode,str(modecode)),('-' if personal.mode_family(modecode)=='pvp' else difficulties.get(contexts[rid],'난이도 '+str(contexts[rid])) if contexts.get(rid) is not None else '미확인'),personal.result_label(modecode,rank),duration(seconds),number((personal.game_totals(db,rid,owner) or {}).get('deaths'))])
    # Detail is read only for the visible page; no replay downloads on UI requests.
    detail.append(rid)
- killers=personal.killer_statistics(db,owner,mode,map_id,hero_id)
+ killers=personal.killer_statistics(db,owner,mode,map_id,hero_id,difficulty)
  killers['filter_label']='모드: '+('전체 모드' if mode is None else modes.get(mode,'모드 '+str(mode)))+' · 맵: '+('전체 맵' if map_id is None else maps.get(map_id,'맵 '+str(map_id)))+' · 캐릭터: '+('전체 캐릭터' if hero_id is None else heroes.get(hero_id,'캐릭터 '+str(hero_id)))
+ killers['filter_label']+=' · 난이도: '+('전체 난이도' if difficulty is None else difficulty_label(difficulty))
  npc_names=game_catalog.names('monsters',db)
  for item in killers['items']:
   name=(npc_names if item['kind']=='npc' else heroes).get(item['hero_id'],'이름 미확인 #'+str(item['hero_id']));item.update(hero_name=name,name=name,standing_painting_id=0)
@@ -88,8 +98,8 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None):
    participants.append({**person,'hero_name':heroes.get(person['hero_id'],str(person['hero_id'])),'own':pid==owner,'available':totals is not None,'rows':metric_rows(totals or {}),'cards':card})
   totals=personal.game_totals(db,rid,owner) or {}
   card=card_ranking(db,owner,rid=rid);card.update(key=rid,title='이 경기 카드 순위');card['chips']=personal.chips.aggregate(db,owner,rid=rid);card['chips'].update(key=rid,title='이 경기에서 선택한 칩');card['dice']=personal.dice.aggregate(db,owner,rid=rid);details.append({'title':'경기 '+rid,'rows':metric_rows(totals),'cards':card,'participants':participants})
- overview_cards=card_ranking(db,owner,mode,map_id,hero_id);overview_cards['basic_rows']=aggregate_metrics(aggregate);overview_cards.update(key='overview',title='전체 카드 순위 · 현재 필터 기준');overview_cards['chips']=personal.chips.aggregate(db,owner,mode,map_id,hero_id);overview_cards['dice']=personal.dice.aggregate(db,owner,mode,map_id,hero_id)
- return {'page_size':page_size,'killers':killers,'card_overview':overview_cards,'row_cards':row_cards[start:start+page_size],'schema':1,'owner_id':owner,'generated_at':int(time.time()),'hero':hero_id if hero_id is not None else -1,'heroes':hero_options,'mode':mode if mode is not None else -1,'map':map_id if map_id is not None else -1,'tab':tab,'page':page,'pages':pages,'total_rows':total,'modes':mode_options,'maps':map_options,
+ overview_cards=card_ranking(db,owner,mode,map_id,hero_id,difficulty=difficulty);overview_cards['basic_rows']=aggregate_metrics(aggregate);overview_cards.update(key='overview',title='전체 카드 순위 · 현재 필터 기준');overview_cards['chips']=personal.chips.aggregate(db,owner,mode,map_id,hero_id,difficulty=difficulty);overview_cards['dice']=personal.dice.aggregate(db,owner,mode,map_id,hero_id,difficulty=difficulty)
+ return {'difficulty':difficulty if difficulty is not None else -1,'difficulty_enabled':mode is None or personal.mode_family(mode)!='pvp','difficulties':difficulty_options,'page_size':page_size,'killers':killers,'card_overview':overview_cards,'row_cards':row_cards[start:start+page_size],'schema':1,'owner_id':owner,'generated_at':int(time.time()),'hero':hero_id if hero_id is not None else -1,'heroes':hero_options,'mode':mode if mode is not None else -1,'map':map_id if map_id is not None else -1,'tab':tab,'page':page,'pages':pages,'total_rows':total,'modes':mode_options,'maps':map_options,
          'summary':[str(count)+' 경기',duration(aggregate['average_duration'])+' 평균 시간']+(['승률 미분류 '+str(stats['by_family']['other']['matches'])+' 경기'] if stats['by_family']['other']['matches'] else []),'pve_summary':personal.family_summary('PvE',stats['by_family']['pve']),'pvp_summary':personal.family_summary('PvP',stats['by_family']['pvp']),
          'columns':columns,'rows':shown,'details':details,'note':'PvE: 1위 승리/2위 패배 · PvP: 1위 승리 · 미확인 결과/모드는 승률 제외'}
 
@@ -100,8 +110,8 @@ def publish(store,state):
   if file.stat().st_size>4096:return False
   request=json.loads(file.read_text(encoding='utf-8-sig'))
   if request.get('owner_id')!=state['owner_id'] or not 0<=time.time()-request.get('updated_at',0)<=60:return False
-  tab=request.get('tab',0);page=request.get('page',0);mode=request.get('mode',-1);map_id=request.get('map',-1);hero_id=request.get('hero',-1)
-  if any(type(v) is not int for v in (tab,page,mode,map_id,hero_id)) or tab not in range(4) or not 0<=page<=100000:return False
-  result=make_snapshot(store.db,state['owner_id'],None if mode==-1 else mode,None if map_id==-1 else map_id,tab,page,None if hero_id==-1 else hero_id)
+  tab=request.get('tab',0);page=request.get('page',0);mode=request.get('mode',-1);map_id=request.get('map',-1);hero_id=request.get('hero',-1);difficulty=request.get('difficulty',-1)
+  if any(type(v) is not int for v in (tab,page,mode,map_id,hero_id,difficulty)) or tab not in range(4) or not 0<=page<=100000 or difficulty < -2 or difficulty>=2**31:return False
+  result=make_snapshot(store.db,state['owner_id'],None if mode==-1 else mode,None if map_id==-1 else map_id,tab,page,None if hero_id==-1 else hero_id,None if difficulty==-1 else difficulty)
   target=store.root/'plugin-ui-snapshot.json';temp=target.with_suffix('.part');temp.write_text(json.dumps(result,ensure_ascii=False),encoding='utf8');temp.replace(target);return True
  except (OSError,ValueError,TypeError,sqlite3.Error,OverflowError,IndexError,KeyError):return False

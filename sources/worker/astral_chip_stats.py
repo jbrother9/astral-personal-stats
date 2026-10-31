@@ -42,11 +42,12 @@ def panel(values,total,key,title,db=None,match=False):
   return str(turn)+'턴' if type(turn) is int and turn>0 else '턴 미확인'
  return {'key':key,'title':title,'analyzed':analyzed,'total':total,'selections':sum(counts.values()),'rerolls':rerolls,'items':[{'selected_turn':selected_at.get(rid,{}).get('round') if match else None,'turn_label':turn_label(rid) if match else '', 'chip_id':rid,'rarity':metadata.get(rid,{}).get('rarity',0),'name':resolve_name(rid),'count':n,'average':f'{n/analyzed:.2f}'.rstrip('0').rstrip('.') if analyzed else '-'} for rid,n in ordered]}
 
-def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None):
+def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None,difficulty=None):
  import astral_personal_data as personal
  where='m.owner_id=?';params=[owner]
  for col,value in (('map_type',mode),('map_id',map_id),('hero_id',hero_id),('replay_id',rid)):
   if value is not None:where+=' AND m.'+col+'=?';params.append(value)
+ extra,args=personal.difficulty_clause('m',difficulty);where+=extra;params+=args
  rows=db.execute('SELECT i.version,i.summary FROM personal_matches m LEFT JOIN personal_match_insights i ON i.replay_id=m.replay_id AND i.owner_id=m.owner_id WHERE '+where,params).fetchall();values=[]
  for version,raw in rows:
   if version is None or version<personal.INSIGHTS_VERSION:continue

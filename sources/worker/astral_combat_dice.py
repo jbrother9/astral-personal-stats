@@ -23,11 +23,12 @@ def panel(values,total):
   n=sum(counts.values());result[kind]={'count':n,'average':f'{sum(k*v for k,v in counts.items())/n:.2f}' if n else '-','faces':[counts.get(i,0) for i in range(1,7)]}
  return result
 
-def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None):
+def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None,difficulty=None):
  import astral_personal_data as personal
  where='m.owner_id=?';params=[owner]
  for col,value in (('map_type',mode),('map_id',map_id),('hero_id',hero_id),('replay_id',rid)):
   if value is not None:where+=' AND m.'+col+'=?';params.append(value)
+ extra,args=personal.difficulty_clause('m',difficulty);where+=extra;params+=args
  rows=db.execute('SELECT i.version,i.summary FROM personal_matches m LEFT JOIN personal_match_insights i ON i.replay_id=m.replay_id AND i.owner_id=m.owner_id WHERE '+where,params).fetchall();values=[]
  for version,raw in rows:
   if version is None or version<personal.INSIGHTS_VERSION:continue

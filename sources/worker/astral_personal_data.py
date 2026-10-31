@@ -155,6 +155,14 @@ def cleanup(db,root,days):
 PVE_MODES=frozenset((4,6,9,10,12))
 PVP_MODES=frozenset((1,2,3,5,8))
 
+def difficulty_clause(alias,difficulty):
+ """None means all; -2 means unknown. Difficulty filters only include PvE matches."""
+ if difficulty is None:return '',[]
+ if type(difficulty) is not int or (difficulty!=-2 and not 0<=difficulty<2**31):raise ValueError('Invalid difficulty filter')
+ field='(SELECT context.difficulty FROM personal_match_context context WHERE context.replay_id='+alias+'.replay_id AND context.owner_id='+alias+'.owner_id)'
+ clause=' AND '+alias+'.map_type IN ('+','.join(str(v) for v in sorted(PVE_MODES))+') AND '+field
+ return (clause+' IS NULL',[]) if difficulty==-2 else (clause+'=?',[difficulty])
+
 def mode_family(mode):
  return 'pve' if mode in PVE_MODES else 'pvp' if mode in PVP_MODES else 'other'
 
@@ -180,13 +188,15 @@ def family_summary(label,row):
  if row['unresolved']:value+=' (미확인 '+str(row['unresolved'])+')'
  return value
 
-def statistics(db,owner,mode=None,map_id=None,hero_id=None):
+def statistics(db,owner,mode=None,map_id=None,hero_id=None,difficulty=None):
  """Personal-only aggregation. Separate PvE/PvP win rates; unknown results are excluded."""
  where='owner_id=?';params=[owner]
  if mode is not None:where+=' AND map_type=?';params.append(mode)
  if map_id is not None:where+=' AND map_id=?';params.append(map_id)
  if hero_id is not None:where+=' AND hero_id=?';params.append(hero_id)
- rows=db.execute('SELECT replay_id,hero_id,map_id,map_type,rank,duration,turns,deaths,npc_last_hits,effect_cards,battle_cards,skills FROM personal_matches WHERE '+where,params).fetchall()
+ extra,args=difficulty_clause('personal_matches',difficulty);where+=extra;params+=args
+ rows=db.execute('SELECT replay_id,hero_id,map_id,map_type,rank,duration,turns,deaths,npc_last_hits,effect_cards,battle_cards,skills,(SELECT difficulty FROM personal_match_context context WHERE context.replay_id=personal_matches.replay_id AND context.owner_id=personal_matches.owner_id) FROM personal_matches WHERE '+where,params).fetchall()
+ rows=[tuple(row[:12])+(row[12] if mode_family(row[3])=='pve' else None,) for row in rows]
  growth={}
  selected={r[0] for r in rows}
  for rid,roundno,raw in db.execute("SELECT replay_id,round,detail FROM personal_events WHERE owner_id=? AND kind='성장 상태'",(owner,)):
@@ -218,7 +228,7 @@ def statistics(db,owner,mode=None,map_id=None,hero_id=None):
   groups={}
   for row in rows:groups.setdefault(tuple(row[i] for i in indices),[]).append(row)
   return [{'key':key,**aggregate(items)} for key,items in sorted(groups.items(),key=lambda pair:(-len(pair[1]),str(pair[0])))]
- return {'overall':aggregate(rows),'by_family':{kind:aggregate([r for r in rows if mode_family(r[3])==kind]) for kind in ('pve','pvp','other')},'by_mode':group((3,)),'by_map':group((2,3)),'by_hero':group((1,3))}
+ return {'overall':aggregate(rows),'by_family':{kind:aggregate([r for r in rows if mode_family(r[3])==kind]) for kind in ('pve','pvp','other')},'by_difficulty':group((12,3)),'by_mode':group((3,)),'by_map':group((2,3)),'by_hero':group((1,3))}
 
 
 def save_appearances(db,summary,owner):
@@ -270,11 +280,12 @@ def save_insights(db,data,summary,owner):
  value={'participants':participants,'killers':[{'kind':kind,'hero_id':hero,'count':count} for (kind,hero),count in sorted(counter.items())],'unknown_deaths':unknown,'deaths':len(deaths)}
  db.execute('INSERT OR REPLACE INTO personal_match_insights VALUES (?,?,?,?)',(summary['replay_id'],owner,INSIGHTS_VERSION,json.dumps(value,ensure_ascii=False)))
 
-def killer_statistics(db,owner,mode=None,map_id=None,hero_id=None):
+def killer_statistics(db,owner,mode=None,map_id=None,hero_id=None,difficulty=None):
  import collections
  where='m.owner_id=?';params=[owner]
  for column,value in (('map_type',mode),('map_id',map_id),('hero_id',hero_id)):
   if value is not None:where+=' AND m.'+column+'=?';params.append(value)
+ extra,args=difficulty_clause('m',difficulty);where+=extra;params+=args
  rows=db.execute('SELECT i.version,i.summary FROM personal_matches m LEFT JOIN personal_match_insights i ON m.replay_id=i.replay_id AND m.owner_id=i.owner_id WHERE '+where,params).fetchall()
  counts=collections.Counter();analyzed=unknown=deaths=0
  for version,raw in rows:

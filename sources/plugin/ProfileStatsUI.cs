@@ -46,7 +46,7 @@ namespace AstralPersonalMod {
  public sealed class CardPanel {public string[][] basic_rows{get;set;}public CardTopItem[] battle_used{get;set;}public CardTopItem[] effect_used{get;set;}public DicePanel dice{get;set;}public ChipPanel chips{get;set;}public string key{get;set;}public string title{get;set;}public int analyzed{get;set;}public int total{get;set;}public int unresolved_use{get;set;}public int unresolved_purchase{get;set;}public int assisted_purchase{get;set;}public CardTopItem[] used{get;set;}public CardTopItem[] acquired{get;set;}public CardTopItem[] bought{get;set;}}
  public sealed class GameDetail {public MatchAppearance[] participants{get;set;}public CardPanel cards{get;set;}public string title{get;set;}public string[][] rows{get;set;}}
  public sealed class CollectionState {public int schema{get;set;}public long owner_id{get;set;}public long heartbeat{get;set;}public string kind{get;set;}public string label{get;set;}}
- public sealed class StatsSnapshot {
+ public sealed class StatsSnapshot {public int difficulty{get;set;}=-1;public bool difficulty_enabled{get;set;}=true;public Choice[] difficulties{get;set;}
   public KillerPanel killers{get;set;}public CardPanel card_overview{get;set;}public CardPanel[] row_cards{get;set;}public int schema{get;set;}public long owner_id{get;set;}public long generated_at{get;set;}
   public int hero{get;set;}=-1;public Choice[] heroes{get;set;}public int page_size{get;set;}public int mode{get;set;}public int map{get;set;}public int tab{get;set;}public int page{get;set;}public int pages{get;set;}public int total_rows{get;set;}
   public Choice[] modes{get;set;}public Choice[] maps{get;set;}public string[] summary{get;set;}public string pve_summary{get;set;}public string pvp_summary{get;set;}public string[] columns{get;set;}public string[][] rows{get;set;}public GameDetail[] details{get;set;}public string note{get;set;}
@@ -55,7 +55,7 @@ namespace AstralPersonalMod {
   readonly MatchPortraits portraits=new MatchPortraits();
   public static long AccountId;
   internal static bool AnyProfileVisible;
-  IObject profile,main,entry,template,window,pane,body,font,modeButton,mapButton,heroButton,refreshButton,matchRefreshButton,footer,status;
+  IObject profile,main,entry,template,window,pane,body,font,modeButton,mapButton,heroButton,difficultyButton,refreshButton,matchRefreshButton,footer,status;
   IObject[] contentTabs,matchContentTabs;IObject contextBack,matchBack,contextLabel;
   IObject[] tabs;IObject[] originals;float[] oldX,oldY,oldW,oldH;
   sealed class ClickBinding { internal IObject Button;internal Action Action; }
@@ -78,16 +78,16 @@ namespace AstralPersonalMod {
   IObject dropdown;
   DropdownModel dropdownModel;
   int dropdownKind;
-  Choice[] modeChoices,mapChoices,heroChoices;
+  Choice[] modeChoices,mapChoices,heroChoices,difficultyChoices;
 
 
-  StatsSnapshot snapshot;bool open;float nextScan,nextRead,nextRequest,nextError,nextDiagnostic;long owner;int tab=3,mode=-1,map=-1,hero=-1,page;int selected=-1;
+  StatsSnapshot snapshot;bool open;float nextScan,nextRead,nextRequest,nextError,nextDiagnostic;long owner;int tab=3,mode=-1,map=-1,hero=-1,difficulty=-1,page;int selected=-1;
   bool profileFound;long profilePlayerId;
   string templateUrl;Color ink=new Color(.19f,.12f,.29f,1),paper=new Color(.965f,.945f,.985f,1),accent=new Color(.46f,.29f,.85f,1),line=new Color(.67f,.57f,.80f,1);
   Color pink=new Color(.94f,.20f,.61f,1),lime=new Color(.78f,1f,.17f,1),lavender=new Color(.87f,.82f,.95f,1),rose=new Color(.98f,.82f,.90f,1);
   const float W=StatsLayout.Width,H=StatsLayout.Height;
   public void Update(){float now=Time.realtimeSinceStartup;try{
-   if(owner!=AccountId){CloseStats();Restore();DisposeEntry();if(window!=null){NativeUI.Call(window,"Dispose");window=null;}profile=main=entry=template=null;clicks.Clear();paints.Clear();hover=IntPtr.Zero;pressed=IntPtr.Zero;modeChoices=mapChoices=heroChoices=null;owner=AccountId;snapshot=null;mode=map=hero=-1;page=0;tab=3;}
+   if(owner!=AccountId){CloseStats();Restore();DisposeEntry();if(window!=null){NativeUI.Call(window,"Dispose");window=null;}profile=main=entry=template=null;clicks.Clear();paints.Clear();hover=IntPtr.Zero;pressed=IntPtr.Zero;modeChoices=mapChoices=heroChoices=difficultyChoices=null;owner=AccountId;snapshot=null;mode=map=hero=difficulty=-1;page=0;tab=3;}
    if(now>=nextScan){nextScan=now+1;Scan();}if(now>=nextDiagnostic){Diagnostic(open?"open":entry!=null&&NativeUI.Bool(entry,"visible")?"button_attached":owner>0?"waiting_for_own_profile":"waiting_for_login");nextDiagnostic=now+10;}
    if(open){if(catalogGeneration!=RuntimeGameCatalog.Generation){catalogGeneration=RuntimeGameCatalog.Generation;Render();}portraits.Update();if(now>=nextCollectionRead){nextCollectionRead=now+1;ReadCollectionStatus();}if(profile==null||!NativeUI.Bool(profile,"isShowing")){CloseStats();return;}if(now>=nextRequest){Request();nextRequest=now+15;}if(now>=nextRead){nextRead=now+1;ReadSnapshot();}Fit();}
   }catch(Exception e){if(now>=nextError){Plugin.Instance.Log.LogWarning("Profile statistics UI retry: "+e.GetType().Name+" / "+e.Message);Diagnostic("ui_retry");nextError=now+15;}}}
@@ -151,7 +151,7 @@ namespace AstralPersonalMod {
    for(int i=0;hit!=null&&i<24;i++,hit=NativeUI.Get(hit,"parent")){
     if(clicks.TryGetValue(hit.Pointer,out var binding)&&!NativeUI.Bool(binding.Button,"isDisposed")&&NativeUI.Bool(binding.Button,"onStage")&&NativeUI.Bool(binding.Button,"visible")){target=hit.Pointer;break;}
    }
-   if(down){if(dropdown!=null&&!insideDropdown&&target!=(modeButton?.Pointer??IntPtr.Zero)&&target!=(mapButton?.Pointer??IntPtr.Zero)&&target!=(heroButton?.Pointer??IntPtr.Zero))CloseDropdown();pressed=target;}
+   if(down){if(dropdown!=null&&!insideDropdown&&target!=(modeButton?.Pointer??IntPtr.Zero)&&target!=(mapButton?.Pointer??IntPtr.Zero)&&target!=(heroButton?.Pointer??IntPtr.Zero)&&target!=(difficultyButton?.Pointer??IntPtr.Zero))CloseDropdown();pressed=target;}
    if(up){var previous=pressed;pressed=IntPtr.Zero;if(previous!=IntPtr.Zero&&target==previous&&clicks.TryGetValue(target,out var binding))binding.Action();}
   }
   void PruneClicks(){var dead=new List<IntPtr>();foreach(var pair in clicks)if(NativeUI.Bool(pair.Value.Button,"isDisposed"))dead.Add(pair.Key);foreach(var key in dead){clicks.Remove(key);paints.Remove(key);if(hover==key)hover=IntPtr.Zero;}}
@@ -181,7 +181,7 @@ namespace AstralPersonalMod {
    var b=Label(pane,"PvP · 경쟁전",626,27,310,23,14,true);TextColor(b,accent);pvpSummary=Label(pane,"기록 확인 중",626,54,318,29,20,true);
    NewButton(pane,"닫기","CloseStats",980,30,108,48);
    Round(pane,30,111,1062,54,lavender,16);string[] names={"전체","맵별","캐릭터별","경기 목록"};string[] events={"TabAll","TabMaps","TabHeroes","TabHistory"};tabs=new IObject[4];int[] scopeOrder={3,1,2,0};for(int slot=0;slot<4;slot++){int i=scopeOrder[slot];tabs[i]=NewButton(pane,names[i],events[i],34+slot*266,115,256,46);}
-   modeButton=NewButton(pane,"전체 모드 ▾","NextMode",34,181,300,42);mapButton=NewButton(pane,"전체 맵 ▾","NextMap",347,181,365,42);heroButton=NewButton(pane,"전체 캐릭터 ▾","NextHero",725,181,363,42);refreshButton=NewButton(pane,"새로고침","RefreshStats",966,237,122,36);matchRefreshButton=NewButton(pane,"새로고침","RefreshStats",244,237,120,36);
+   modeButton=NewButton(pane,"전체 모드 ▾","NextMode",34,181,225,42);mapButton=NewButton(pane,"전체 맵 ▾","NextMap",269,181,300,42);heroButton=NewButton(pane,"전체 캐릭터 ▾","NextHero",579,181,250,42);difficultyButton=NewButton(pane,"전체 난이도 ▾","NextDifficulty",839,181,249,42);refreshButton=NewButton(pane,"새로고침","RefreshStats",966,237,122,36);matchRefreshButton=NewButton(pane,"새로고침","RefreshStats",244,237,120,36);
    string[] contentNames={"기본 통계","카드","칩","주사위"};string[] contentEvents={"ShowBasic","ShowCards","ShowChips","ShowDice"};contentTabs=new IObject[4];for(int i=0;i<4;i++)contentTabs[i]=NewButton(pane,contentNames[i],contentEvents[i],34+i*164,237,156,36);
    matchContentTabs=new IObject[4];for(int i=0;i<4;i++){int index=i;matchContentTabs[i]=NewButton(pane,i==0?"경기 통계":contentNames[index],contentEvents[index],386+i*177,237,169,36);}matchBack=NewButton(pane,"경기 목록으로","BackToList",34,237,198,36);
    contextLabel=Label(pane,"",710,244,240,24,13);contextBack=NewButton(pane,"전체 목록으로","BackToList",710,237,240,36);
@@ -207,15 +207,15 @@ namespace AstralPersonalMod {
    catch{label="수집 상태 확인 중";}
    NativeUI.Set(collectionLabel,"text",label);TextColor(collectionLabel,kind=="ready"?Rgb(0x236B45):kind=="attention"||kind=="retry"?Rgb(0x927019):kind=="working"?accent:ink);
   }
-  void Request(){string json="{\"owner_id\":"+owner+",\"updated_at\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"tab\":"+tab+",\"mode\":"+mode+",\"map\":"+map+",\"hero\":"+hero+",\"page\":"+page+"}";var target=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-request.json");File.WriteAllText(target+".part",json);File.Move(target+".part",target,true);}
-  void ReadSnapshot(){string path=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-snapshot.json");if(!File.Exists(path))return;if(new FileInfo(path).Length>4194304)return;var next=JsonSerializer.Deserialize<StatsSnapshot>(File.ReadAllText(path));if(next==null||next.schema!=1||next.owner_id!=owner||next.tab!=tab||next.mode!=mode||next.map!=map||next.hero!=hero||next.page!=page||DateTimeOffset.UtcNow.ToUnixTimeSeconds()-next.generated_at>60)return;if(snapshot!=null&&snapshot.generated_at==next.generated_at)return;bool unchanged=snapshot!=null&&PresentationKey(snapshot)==PresentationKey(next);snapshot=next;modeChoices=next.modes;mapChoices=next.maps;heroChoices=next.heroes;if(!unchanged)Render();}
+  void Request(){string json="{\"owner_id\":"+owner+",\"updated_at\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"tab\":"+tab+",\"mode\":"+mode+",\"map\":"+map+",\"hero\":"+hero+",\"difficulty\":"+difficulty+",\"page\":"+page+"}";var target=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-request.json");File.WriteAllText(target+".part",json);File.Move(target+".part",target,true);}
+  void ReadSnapshot(){string path=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-snapshot.json");if(!File.Exists(path))return;if(new FileInfo(path).Length>4194304)return;var next=JsonSerializer.Deserialize<StatsSnapshot>(File.ReadAllText(path));if(next==null||next.schema!=1||next.owner_id!=owner||next.tab!=tab||next.mode!=mode||next.map!=map||next.hero!=hero||next.difficulty!=difficulty||next.page!=page||DateTimeOffset.UtcNow.ToUnixTimeSeconds()-next.generated_at>60)return;if(snapshot!=null&&snapshot.generated_at==next.generated_at)return;bool unchanged=snapshot!=null&&PresentationKey(snapshot)==PresentationKey(next);snapshot=next;modeChoices=next.modes;mapChoices=next.maps;heroChoices=next.heroes;difficultyChoices=next.difficulties;if(!unchanged)Render();}
   string PresentationKey(StatsSnapshot value){
    // Ignore heartbeat timestamps. Keep the existing loaders alive while visible content is unchanged.
-   if(selected>=0&&value.details!=null&&selected<value.details.Length)return JsonSerializer.Serialize(new {value.mode,value.map,value.hero,detail=value.details[selected],value.summary,value.pve_summary,value.pvp_summary});
+   if(selected>=0&&value.details!=null&&selected<value.details.Length)return JsonSerializer.Serialize(new {value.mode,value.map,value.hero,value.difficulty,detail=value.details[selected],value.summary,value.pve_summary,value.pvp_summary});
    long generated=value.generated_at;try{value.generated_at=0;return JsonSerializer.Serialize(value);}finally{value.generated_at=generated;}
   }
   void ClearBody(){portraits.Clear();NativeUI.Call(body,"RemoveChildren",0,-1,true);PruneClicks();}
-  void Render(){if(!open||body==null)return;LayoutContentTabs();bool pages=cardView||chipView||(!cardView&&!diceView&&selected<0&&cardKey==null);NativeUI.Set(previousButton,"visible",pages);NativeUI.Set(nextButton,"visible",pages);UpdateFilterLabels();for(int i=0;i<4;i++)SetButtonSelected(tabs[i],i==tab);ClearBody();if(snapshot==null||snapshot.tab!=tab||snapshot.mode!=mode||snapshot.map!=map||snapshot.hero!=hero||snapshot.page!=page){Label(body,"통계를 불러오는 중입니다…",15,24,1000,35,22);NativeUI.Set(footer,"text","분석기가 준비되면 자동으로 표시됩니다.");return;}
+  void Render(){if(!open||body==null)return;LayoutContentTabs();bool pages=cardView||chipView||(!cardView&&!diceView&&selected<0&&cardKey==null);NativeUI.Set(previousButton,"visible",pages);NativeUI.Set(nextButton,"visible",pages);UpdateFilterLabels();for(int i=0;i<4;i++)SetButtonSelected(tabs[i],i==tab);ClearBody();if(snapshot==null||snapshot.tab!=tab||snapshot.mode!=mode||snapshot.map!=map||snapshot.hero!=hero||snapshot.difficulty!=difficulty||snapshot.page!=page){Label(body,"통계를 불러오는 중입니다…",15,24,1000,35,22);NativeUI.Set(footer,"text","분석기가 준비되면 자동으로 표시됩니다.");return;}
    UpdateFilterLabels();NativeUI.Set(status,"text",(snapshot.summary!=null&&snapshot.summary.Length>0?snapshot.summary[0]:"플레이 기록")+" · ID "+owner);NativeUI.Set(pveSummary,"text",(snapshot.pve_summary??"PvE 기록 없음").Replace("PvE ",""));NativeUI.Set(pvpSummary,"text",(snapshot.pvp_summary??"PvP 기록 없음").Replace("PvP ",""));
    if(selected>=0&&snapshot.details!=null&&selected<snapshot.details.Length){DrawDetail(snapshot.details[selected]);return;}
    if(diceView){DrawDice(CurrentCards()?.dice,false);return;}
@@ -361,29 +361,30 @@ namespace AstralPersonalMod {
    NativeUI.Set(footer,"text","");
   }
   string ChoiceLabel(Choice[] choices,int id,string fallback){if(choices!=null)foreach(var c in choices)if(c.id==id)return c.label;return fallback;}
-  void UpdateFilterLabels(){if(modeButton!=null)SetButtonText(modeButton,ChoiceLabel(modeChoices,mode,"전체 모드")+" ▾");if(mapButton!=null)SetButtonText(mapButton,ChoiceLabel(mapChoices,map,"전체 맵")+" ▾");if(heroButton!=null)SetButtonText(heroButton,ChoiceLabel(heroChoices,hero,"전체 캐릭터")+" ▾");}
+  bool DifficultyEnabled{get{if(modeChoices!=null)foreach(var choice in modeChoices)if(choice.id==mode)return !choice.is_pvp;return true;}}
+  void UpdateFilterLabels(){if(modeButton!=null)SetButtonText(modeButton,ChoiceLabel(modeChoices,mode,"전체 모드")+" ▾");if(mapButton!=null)SetButtonText(mapButton,ChoiceLabel(mapChoices,map,"전체 맵")+" ▾");if(heroButton!=null)SetButtonText(heroButton,ChoiceLabel(heroChoices,hero,"전체 캐릭터")+" ▾");if(difficultyButton!=null){bool enabled=DifficultyEnabled;SetButtonText(difficultyButton,enabled?ChoiceLabel(difficultyChoices,difficulty,"전체 난이도")+" ▾":"난이도 해당 없음");NativeUI.Set(difficultyButton,"grayed",!enabled);NativeUI.Set(difficultyButton,"touchable",enabled);}}
   bool Within(IObject child,IObject ancestor){if(child==null||ancestor==null)return false;for(int i=0;child!=null&&i<24;i++,child=NativeUI.Get(child,"parent"))if(NativeUI.Same(child,ancestor))return true;return false;}
   void CloseDropdown(){if(dropdown!=null){try{NativeUI.Call(dropdown,"Dispose");}catch{}dropdown=null;PruneClicks();}dropdownKind=0;dropdownModel=null;}
-  void ToggleDropdown(int kind){if(dropdown!=null&&dropdownKind==kind){CloseDropdown();return;}CloseDropdown();var choices=kind==1?modeChoices:kind==2?mapChoices:heroChoices;if(choices==null||choices.Length==0)return;dropdownKind=kind;dropdownModel=new DropdownModel(choices,kind==1?mode:kind==2?map:hero);DrawDropdown();}
+  void ToggleDropdown(int kind){if(kind==4&&!DifficultyEnabled)return;if(dropdown!=null&&dropdownKind==kind){CloseDropdown();return;}CloseDropdown();var choices=kind==1?modeChoices:kind==2?mapChoices:kind==3?heroChoices:difficultyChoices;if(choices==null||choices.Length==0)return;dropdownKind=kind;dropdownModel=new DropdownModel(choices,kind==1?mode:kind==2?map:kind==3?hero:difficulty);DrawDropdown();}
   IObject ActionButton(IObject parent,string text,Action action,float x,float y,float w,float h){var b=NewButton(parent,text,null,x,y,w,h);Bind(b,action);return b;}
   void DrawDropdown(){
    if(dropdownModel==null)return;
    if(dropdown!=null){NativeUI.Call(dropdown,"Dispose");dropdown=null;PruneClicks();}
-   float w=dropdownKind==1?300:dropdownKind==2?365:363;int count=dropdownModel.VisibleCount;float h=12+count*40+(dropdownModel.Count>DropdownModel.Limit?42:0);
-   dropdown=Component(pane,dropdownKind==1?34:dropdownKind==2?347:725,226,w,h);NativeUI.Set(dropdown,"name","astral_filter_dropdown");NativeUI.Set(dropdown,"sortingOrder",100);NativeUI.Set(dropdown,"opaque",true);Round(dropdown,0,0,w,h,lavender,13);
+   var anchor=dropdownKind==1?modeButton:dropdownKind==2?mapButton:dropdownKind==3?heroButton:difficultyButton;float w=NativeUI.Float(anchor,"width");int count=dropdownModel.VisibleCount;float h=12+count*40+(dropdownModel.Count>DropdownModel.Limit?42:0);
+   dropdown=Component(pane,NativeUI.Float(anchor,"x"),226,w,h);NativeUI.Set(dropdown,"name","astral_filter_dropdown");NativeUI.Set(dropdown,"sortingOrder",100);NativeUI.Set(dropdown,"opaque",true);Round(dropdown,0,0,w,h,lavender,13);
    for(int row=0;row<count;row++){
     int index=dropdownModel.Offset+row;var option=dropdownModel.At(index);bool chosen=option.id==dropdownModel.SelectedId;
     var b=ActionButton(dropdown,option.label,()=>SelectDropdown(index),5,6+row*40,w-10,37);SetButtonSelected(b,chosen);
    }
    if(dropdownModel.Count>DropdownModel.Limit){float y=8+count*40;ActionButton(dropdown,"▲",()=>ScrollDropdown(-1),5,y,52,32);ActionButton(dropdown,"▼",()=>ScrollDropdown(1),w-57,y,52,32);Label(dropdown,(dropdownModel.Offset+1)+"–"+(dropdownModel.Offset+count)+" / "+dropdownModel.Count,68,y+5,w-136,26,16);}
   }
-  void SelectDropdown(int index){var option=dropdownModel?.At(index);if(option==null)return;if(dropdownKind==1)mode=option.id;else if(dropdownKind==2)map=option.id;else if(dropdownKind==3)hero=option.id;page=0;Change(true);}
+  void SelectDropdown(int index){var option=dropdownModel?.At(index);if(option==null)return;if(dropdownKind==1){mode=option.id;if(option.is_pvp)difficulty=-1;}else if(dropdownKind==2)map=option.id;else if(dropdownKind==3)hero=option.id;else if(dropdownKind==4)difficulty=option.id;page=0;Change(true);}
   void ScrollDropdown(int delta){if(dropdownModel!=null&&dropdownModel.Scroll(delta))DrawDropdown();}
   void PollDropdownScroll(){if(!open||dropdown==null)return;float wheel=Input.mouseScrollDelta.y;if(Math.Abs(wheel)<.001f)return;var root=NativeUI.Static("FairyGUI.GRoot","inst");if(Within(NativeUI.Get(root,"touchTarget"),dropdown))ScrollDropdown(wheel>0?-1:1);}
   void Change(bool preserveView=false){if(!preserveView||tab==3){diceView=false;chipView=false;cardView=false;}chipPage=cardPage=0;selectedPlayer=0;CloseDropdown();selected=-1;cardKey=null;snapshot=null;Request();Render();nextRead=0;}
   void SetTab(int v){cardView=false;tab=v;page=0;Change();}
   public void TabAll(){SetTab(0);}public void TabMaps(){SetTab(1);}public void TabHeroes(){SetTab(2);}public void TabHistory(){SetTab(3);}
-  public void NextMode(){ToggleDropdown(1);}public void NextMap(){ToggleDropdown(2);}public void NextHero(){ToggleDropdown(3);}
+  public void NextDifficulty(){ToggleDropdown(4);}public void NextMode(){ToggleDropdown(1);}public void NextMap(){ToggleDropdown(2);}public void NextHero(){ToggleDropdown(3);}
   public void PreviousPage(){if(cardView){PreviousCards();return;}if(chipView){PreviousChips();return;}if(page>0){page--;Change();}}public void NextPage(){if(cardView){NextCards();return;}if(chipView){NextChips();return;}if(snapshot!=null&&page+1<snapshot.pages){page++;Change();}}
   public void RefreshStats(){RuntimeGameCatalog.Invalidate();CloseDropdown();Request();nextRead=0;}public void BackToList(){cardPage=0;diceView=false;chipView=false;selectedPlayer=0;cardView=false;cardKey=null;selected=-1;Render();}
   void Select(int r){cardPage=0;diceView=false;chipView=false;if(snapshot==null)return;if(tab==3){if(snapshot.details==null||r>=snapshot.details.Length)return;selected=r;selectedPlayer=0;cardView=false;}else{if(snapshot.row_cards==null||r>=snapshot.row_cards.Length)return;cardKey=snapshot.row_cards[r].key;selected=-1;cardView=false;}Render();}

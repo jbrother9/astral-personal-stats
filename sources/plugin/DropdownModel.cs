@@ -1,6 +1,6 @@
 using System;
 namespace AstralPersonalMod {
- public sealed class Choice {public int id{get;set;}public string label{get;set;}}
+ public sealed class Choice {public bool is_pvp{get;set;}public int id{get;set;}public string label{get;set;}}
  internal sealed class DropdownModel {
   internal readonly Choice[] Options;
   internal readonly int SelectedId;

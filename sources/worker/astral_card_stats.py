@@ -79,10 +79,12 @@ def save(db,rid,owner,summary):
 def has_index(db,rid,owner):
  row=db.execute('SELECT version FROM personal_card_stats WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone();return bool(row and row[0]>=VERSION)
 
-def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None):
+def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None,difficulty=None):
+ import astral_personal_data as personal
  where='m.owner_id=?';params=[owner]
  for col,value in (('map_type',mode),('map_id',map_id),('hero_id',hero_id),('replay_id',rid)):
   if value is not None:where+=' AND m.'+col+'=?';params.append(value)
+ extra,args=personal.difficulty_clause('m',difficulty);where+=extra;params+=args
  rows=db.execute('SELECT c.version,c.summary FROM personal_matches m LEFT JOIN personal_card_stats c ON c.replay_id=m.replay_id AND c.owner_id=m.owner_id WHERE '+where,params).fetchall()
  totals={kind:collections.Counter() for kind in ('used','battle_used','effect_used','acquired','bought')};analyzed=0;unresolved_use=unresolved_buy=assisted=0
  for version,raw in rows:
