@@ -14,7 +14,7 @@ namespace AstralPersonalMod {
   static readonly long[] total=new long[4],maximum=new long[4],slowAt=new long[4];
   static readonly Dictionary<string,long> errors=new Dictionary<string,long>();
   static long nextFlush,nextSummary,frames,frameTotal,frameMax;
-  static bool open;static long searches,searchTicks,searchMax,searchNodes,searchNodesMax,searchBytes;
+  static bool open;static long searches,searchTicks,searchMax,searchNodes,searchNodesMax,searchBytes,searchCacheHits;
   internal static long Clock()=>Stopwatch.GetTimestamp();
   static string Number(double value)=>value.ToString("0.###",CultureInfo.InvariantCulture);
   internal static void Initialize(string directory,string version){
@@ -43,8 +43,8 @@ namespace AstralPersonalMod {
    if(elapsed*1000.0/Stopwatch.Frequency>=20&&now-slowAt[task]>=5*Stopwatch.Frequency){slowAt[task]=now;Event("slow_task","task="+tasks[task]+" ms="+Number(elapsed*1000.0/Stopwatch.Frequency));}
    return now;
   }
-  internal static void Search(int nodes,long started,long allocated){
-   long elapsed=Math.Max(0,Clock()-started);searches++;searchTicks+=elapsed;searchMax=Math.Max(searchMax,elapsed);searchNodes+=nodes;searchNodesMax=Math.Max(searchNodesMax,nodes);searchBytes+=Math.Max(0,allocated);
+  internal static void Search(int nodes,long started,long allocated,bool cached=false){
+   long elapsed=Math.Max(0,Clock()-started);searches++;if(cached)searchCacheHits++;searchTicks+=elapsed;searchMax=Math.Max(searchMax,elapsed);searchNodes+=nodes;searchNodesMax=Math.Max(searchNodesMax,nodes);searchBytes+=Math.Max(0,allocated);
   }
   internal static void View(bool visible){if(open==visible)return;open=visible;Event(visible?"stats_open":"stats_close","",true);}
   internal static void CompleteFrame(long started){
@@ -53,8 +53,8 @@ namespace AstralPersonalMod {
     string data="samples="+frames+" own_avg_ms="+Number(frameTotal*1000.0/Stopwatch.Frequency/Math.Max(1,frames))+" own_max_ms="+Number(frameMax*1000.0/Stopwatch.Frequency)+" stats_open="+open;
     for(int i=0;i<tasks.Length;i++){data+=" "+tasks[i]+"_avg_ms="+Number(total[i]*1000.0/Stopwatch.Frequency/Math.Max(1,frames))+" "+tasks[i]+"_max_ms="+Number(maximum[i]*1000.0/Stopwatch.Frequency);total[i]=maximum[i]=0;}
     try{data+=" clr_managed_mb="+Number(GC.GetTotalMemory(false)/1048576.0)+" gc0="+GC.CollectionCount(0)+" gc1="+GC.CollectionCount(1)+" gc2="+GC.CollectionCount(2);using(var process=Process.GetCurrentProcess()){data+=" game_private_mb="+Number(process.PrivateMemorySize64/1048576.0);}}catch{}
-    data+=" profile_scans="+searches+" scan_avg_ms="+Number(searchTicks*1000.0/Stopwatch.Frequency/Math.Max(1,searches))+" scan_max_ms="+Number(searchMax*1000.0/Stopwatch.Frequency)+" scan_nodes_avg="+Number(searchNodes/(double)Math.Max(1,searches))+" scan_nodes_max="+searchNodesMax+" scan_clr_bytes="+searchBytes;
-    searches=searchTicks=searchMax=searchNodes=searchNodesMax=searchBytes=0;
+    data+=" profile_scans="+searches+" scan_avg_ms="+Number(searchTicks*1000.0/Stopwatch.Frequency/Math.Max(1,searches))+" scan_max_ms="+Number(searchMax*1000.0/Stopwatch.Frequency)+" scan_nodes_avg="+Number(searchNodes/(double)Math.Max(1,searches))+" scan_nodes_max="+searchNodesMax+" scan_clr_bytes="+searchBytes+" scan_cache_hits="+searchCacheHits;
+    searches=searchTicks=searchMax=searchNodes=searchNodesMax=searchBytes=searchCacheHits=0;
     Event("performance",data);frames=frameTotal=frameMax=0;nextSummary=now+30*Stopwatch.Frequency;
    }
    Flush(false);

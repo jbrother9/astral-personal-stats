@@ -17,12 +17,27 @@ namespace AstralPersonalMod {
   internal static IObject Box(object v){if(v==null)return null;if(v is IObject io)return io;if(v is string s)return (Il2CppSystem.String)s;if(v is long l)return System.Runtime.CompilerServices.Unsafe.As<long,Il2CppSystem.Int64>(ref l).BoxIl2CppObject();if(v is int i)return System.Runtime.CompilerServices.Unsafe.As<int,Il2CppSystem.Int32>(ref i).BoxIl2CppObject();if(v is float f)return System.Runtime.CompilerServices.Unsafe.As<float,Il2CppSystem.Single>(ref f).BoxIl2CppObject();if(v is bool b)return System.Runtime.CompilerServices.Unsafe.As<bool,Il2CppSystem.Boolean>(ref b).BoxIl2CppObject();if(v is Color c)return c.BoxIl2CppObject();throw new ArgumentException("Unsupported UI value");}
   internal static IObject Get(IObject obj,string name){if(obj==null)return null;return Get(obj.GetIl2CppType(),obj,name);}
   internal static IObject Static(string type,string name){return Get(Type(type),null,name);}
-  static IObject Get(IType type,IObject obj,string name){for(int i=0;type!=null&&i<16;i++,type=type.BaseType){var f=type.GetField(name,Flags)??type.GetField("<"+name+">k__BackingField",Flags);if(f!=null)return f.GetValue(obj);var p=type.GetProperty(name,Flags);if(p!=null)return p.GetValue(obj,null);}return null;}
-  internal static void Set(IObject obj,string name,object value){if(obj==null)throw new ArgumentNullException(name);IType type=obj.GetIl2CppType();for(int i=0;type!=null&&i<16;i++,type=type.BaseType){var p=type.GetProperty(name,Flags);if(p!=null){p.SetValue(obj,Convert(value,p.PropertyType),null);return;}var f=type.GetField(name,Flags);if(f!=null){f.SetValue(obj,Convert(value,f.FieldType));return;}}throw new MissingMemberException(name);}
+  sealed class Accessor {internal IType Type;internal Il2CppSystem.Reflection.FieldInfo Field;internal Il2CppSystem.Reflection.PropertyInfo Property;internal IType ValueType;}
+  static readonly Dictionary<(IntPtr,string),Accessor> readers=new Dictionary<(IntPtr,string),Accessor>(),writers=new Dictionary<(IntPtr,string),Accessor>();
+  static readonly Dictionary<IntPtr,(IType Type,string Name)> typeNames=new Dictionary<IntPtr,(IType,string)>();
+  internal static string TypeName(IObject value)=>value==null?"":TypeName(value.GetIl2CppType());
+  static string TypeName(IType type){if(typeNames.TryGetValue(type.Pointer,out var cached))return cached.Name;string name=type.FullName;typeNames[type.Pointer]=(type,name);return name;}
+  static Accessor Resolve(IType type,string name,bool write){
+   if(type==null)return null;var cache=write?writers:readers;var key=(type.Pointer,name);if(cache.TryGetValue(key,out var found))return found;
+   IType requested=type;
+   for(int i=0;type!=null&&i<16;i++,type=type.BaseType){
+    if(write){var property=type.GetProperty(name,Flags);if(property!=null){found=new Accessor{Type=requested,Property=property,ValueType=property.PropertyType};break;}var field=type.GetField(name,Flags);if(field!=null){found=new Accessor{Type=requested,Field=field,ValueType=field.FieldType};break;}}
+    else{var field=type.GetField(name,Flags)??type.GetField("<"+name+">k__BackingField",Flags);if(field!=null){found=new Accessor{Type=requested,Field=field};break;}var property=type.GetProperty(name,Flags);if(property!=null){found=new Accessor{Type=requested,Property=property};break;}}
+   }
+   // Cache metadata only. Never cache failed late-loaded lookups or live field values.
+   if(found!=null)cache[key]=found;return found;
+  }
+  static IObject Get(IType type,IObject obj,string name){var accessor=Resolve(type,name,false);return accessor==null?null:accessor.Field!=null?accessor.Field.GetValue(obj):accessor.Property.GetValue(obj,null);}
+  internal static void Set(IObject obj,string name,object value){if(obj==null)throw new ArgumentNullException(name);var accessor=Resolve(obj.GetIl2CppType(),name,true);if(accessor==null)throw new MissingMemberException(name);var boxed=Convert(value,accessor.ValueType);if(accessor.Field!=null)accessor.Field.SetValue(obj,boxed);else accessor.Property.SetValue(obj,boxed,null);}
   static IObject Convert(object value,IType target){if(target.IsEnum)return Il2CppSystem.Enum.Parse(target,value.ToString());return Box(value);}
   internal static IObject Call(IObject obj,string name,params object[] args){return Invoke(obj.GetIl2CppType(),obj,name,args);}
   internal static IObject CallStatic(string type,string name,params object[] args){return Invoke(Type(type),null,name,args);}
-  static IObject Invoke(IType type,IObject obj,string name,object[] args){if(type==null)throw new TypeLoadException(name);string key=type.FullName+"/"+name;var values=new IArray(args.Length);for(int i=0;i<args.Length;i++){values[i]=Box(args[i]);key+="/"+(values[i]==null?"null":values[i].GetIl2CppType().FullName);}
+  static IObject Invoke(IType type,IObject obj,string name,object[] args){if(type==null)throw new TypeLoadException(name);string key=TypeName(type)+"/"+name;var values=new IArray(args.Length);for(int i=0;i<args.Length;i++){values[i]=Box(args[i]);key+="/"+(values[i]==null?"null":TypeName(values[i]));}
    if(!methods.TryGetValue(key,out var method)){
     foreach(var m in type.GetMethods(Flags)){if(m.Name!=name||m.IsStatic!=(obj==null))continue;var ps=m.GetParameters();if(ps.Length!=args.Length)continue;bool match=true;for(int i=0;i<ps.Length;i++){if(values[i]!=null&&!ps[i].ParameterType.IsInstanceOfType(values[i])){match=false;break;}}if(match){method=m;break;}}
     if(method==null)throw new MissingMethodException(type.FullName+"."+name+"/"+args.Length);methods[key]=method;
@@ -83,19 +98,34 @@ namespace AstralPersonalMod {
 
   StatsSnapshot snapshot;bool open;float nextScan,nextRead,nextRequest,nextError,nextDiagnostic;long owner;int tab=3,mode=-1,map=-1,hero=-1,difficulty=-1,page;int selected=-1;
   bool profileFound;long profilePlayerId;
+  IObject cachedProfile;bool entryLayoutApplied,entryStampValid,windowHidden=true;
+  bool styleBold;int styleScreenWidth,styleScreenHeight,styleFontSize;long styleGeneration=-1;float styleWidth,styleHeight,styleScaleX,styleScaleY;string styleFont;
+  float nextFit;int shieldOrder=int.MinValue;
+  readonly UiPlacementCache placement=new UiPlacementCache();
+  long snapshotFileTicks=-1,snapshotFileLength=-1;string snapshotPresentation;int snapshotSelection=int.MinValue;
+  string shownCollectionLabel,shownCollectionKind;
+  static bool SearchVisible(IObject node){return node!=null&&!NativeUI.Bool(node,"isDisposed")&&NativeUI.Bool(node,"onStage")&&NativeUI.Bool(node,"visible")&&NativeUI.Bool(node,"internalVisible")&&NativeUI.Bool(node,"internalVisible2");}
+  static bool SearchMatch(IObject node)=>NativeUI.TypeName(node)=="UI.AccountInfoWindow";
+  static int SearchChildren(IObject node){var component=NativeUI.Get(node,"asCom");return component==null?0:Math.Max(0,(int)NativeUI.Long(component,"numChildren"));}
+  static IObject SearchChild(IObject node,int index)=>NativeUI.Call(node,"GetChildAt",index);
+  static IObject SearchParent(IObject node)=>NativeUI.Get(node,"parent");
+  readonly ProfileTreeSearch<IObject> profileSearch=new ProfileTreeSearch<IObject>(SearchVisible,SearchMatch,SearchChildren,SearchChild,SearchParent,NativeUI.Same);
+
   string templateUrl;Color ink=new Color(.19f,.12f,.29f,1),paper=new Color(.965f,.945f,.985f,1),accent=new Color(.46f,.29f,.85f,1),line=new Color(.67f,.57f,.80f,1);
   Color pink=new Color(.94f,.20f,.61f,1),lime=new Color(.78f,1f,.17f,1),lavender=new Color(.87f,.82f,.95f,1),rose=new Color(.98f,.82f,.90f,1);
   const float W=StatsLayout.Width,H=StatsLayout.Height;
   public void Update(){float now=Time.realtimeSinceStartup;try{
-   if(owner!=AccountId){CloseStats();Restore();DisposeEntry();if(window!=null){NativeUI.Call(window,"Dispose");window=null;}profile=main=entry=template=null;clicks.Clear();paints.Clear();hover=IntPtr.Zero;pressed=IntPtr.Zero;modeChoices=mapChoices=heroChoices=difficultyChoices=null;owner=AccountId;snapshot=null;mode=map=hero=difficulty=-1;page=0;tab=3;}
+   if(owner!=AccountId){CloseStats();Restore();DisposeEntry();if(window!=null){NativeUI.Call(window,"Dispose");window=null;}profile=main=entry=template=null;clicks.Clear();paints.Clear();hover=IntPtr.Zero;pressed=IntPtr.Zero;modeChoices=mapChoices=heroChoices=difficultyChoices=null;owner=AccountId;snapshot=null;cachedProfile=null;profileSearch.Clear();entryStampValid=false;snapshotPresentation=null;placement.Invalidate();mode=map=hero=difficulty=-1;page=0;tab=3;}
    if(now>=nextScan){nextScan=now+1;Scan();}if(now>=nextDiagnostic){Diagnostic(open?"open":entry!=null&&NativeUI.Bool(entry,"visible")?"button_attached":owner>0?"waiting_for_own_profile":"waiting_for_login");nextDiagnostic=now+10;}
-   if(open){if(catalogGeneration!=RuntimeGameCatalog.Generation){catalogGeneration=RuntimeGameCatalog.Generation;Render();}portraits.Update();if(now>=nextCollectionRead){nextCollectionRead=now+1;ReadCollectionStatus();}if(profile==null||!NativeUI.Bool(profile,"isShowing")){CloseStats();return;}if(now>=nextRequest){Request();nextRequest=now+15;}if(now>=nextRead){nextRead=now+1;ReadSnapshot();}Fit();}
+   if(open){if(catalogGeneration!=RuntimeGameCatalog.Generation){catalogGeneration=RuntimeGameCatalog.Generation;Render();}portraits.Update();if(now>=nextCollectionRead){nextCollectionRead=now+1;ReadCollectionStatus();}if(profile==null||!NativeUI.Bool(profile,"isShowing")){CloseStats();return;}if(now>=nextRequest){Request();nextRequest=now+15;}if(now>=nextRead){nextRead=now+1;ReadSnapshot();}if(now>=nextFit){nextFit=now+.1f;Fit();}}
   }catch(Exception e){RuntimeDiagnostics.Error("profile.update",e);if(now>=nextError){Plugin.Instance.Log.LogWarning("Profile statistics UI retry: "+e.GetType().Name+" / "+e.Message);Diagnostic("ui_retry");nextError=now+15;}}}
   void Diagnostic(string state){try{File.WriteAllText(Path.Combine(Plugin.Instance.DataDir,"plugin-ui-state.json"),"{\"owner_id\":"+owner+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+state+"\",\"profile_found\":"+(profileFound?"true":"false")+",\"profile_player_id\":"+profilePlayerId+",\"window_showing\":"+(window!=null&&NativeUI.Bool(window,"isShowing")?"true":"false")+",\"window_on_stage\":"+(window!=null&&NativeUI.Bool(window,"onStage")?"true":"false")+",\"window_order\":"+NativeUI.Long(window,"sortingOrder")+",\"profile_order\":"+NativeUI.Long(profile,"sortingOrder")+",\"shield_on_stage\":"+(shield!=null&&NativeUI.Bool(shield,"onStage")?"true":"false")+",\"profile_touchable\":"+(NativeUI.Bool(profile,"touchable")?"true":"false")+"}");}catch{}}
-  int diagnosticScanNodes;
-  IObject FindProfile(IObject root,int depth){diagnosticScanNodes++;if(root==null||depth>4)return null;if(root.GetIl2CppType().FullName=="UI.AccountInfoWindow")return root;int count=(int)NativeUI.Long(root,"numChildren");for(int i=count-1;i>=0;i--){var result=FindProfile(NativeUI.Call(root,"GetChildAt",i),depth+1);if(result!=null)return result;}return null;}
-  void Scan(){if(owner<=0||NativeUI.Type("FairyGUI.GRoot")==null)return;var root=NativeUI.Static("FairyGUI.GRoot","inst");long scanStarted=RuntimeDiagnostics.Clock(),scanAllocated=GC.GetAllocatedBytesForCurrentThread();diagnosticScanNodes=0;var found=FindProfile(root,0);RuntimeDiagnostics.Search(diagnosticScanNodes,scanStarted,GC.GetAllocatedBytesForCurrentThread()-scanAllocated);profileFound=found!=null;AnyProfileVisible=found!=null&&NativeUI.Bool(found,"isShowing");profilePlayerId=NativeUI.Long(NativeUI.Get(found,"playerCareer"),"playerId");
-   if(found==null||!NativeUI.Bool(found,"isShowing")||profilePlayerId!=owner){if(entry!=null){NativeUI.Set(entry,"visible",false);Restore();}CloseStats();return;}
+  void Scan(){if(owner<=0||NativeUI.Type("FairyGUI.GRoot")==null)return;var root=NativeUI.Static("FairyGUI.GRoot","inst");long scanStarted=RuntimeDiagnostics.Clock(),scanAllocated=GC.GetAllocatedBytesForCurrentThread();
+   var found=profileSearch.Find(root,cachedProfile,out int visited);cachedProfile=found;
+   if(profileSearch.Pending)nextScan=Math.Min(nextScan,Time.realtimeSinceStartup+.05f);
+   RuntimeDiagnostics.Search(visited,scanStarted,GC.GetAllocatedBytesForCurrentThread()-scanAllocated,profileSearch.UsedCache);
+   profileFound=found!=null;AnyProfileVisible=found!=null&&NativeUI.Bool(found,"isShowing");profilePlayerId=NativeUI.Long(NativeUI.Get(found,"playerCareer"),"playerId");
+   if(found==null||!NativeUI.Bool(found,"isShowing")||profilePlayerId!=owner){if(entry!=null){if(NativeUI.Bool(entry,"isDisposed"))DisposeEntry();else NativeUI.Set(entry,"visible",false);Restore();}CloseStats();return;}
    Plugin.ObserveOwnHistory(NativeUI.Get(found,"playerCareer"));
    if(!NativeUI.Same(profile,found)||entry==null||NativeUI.Bool(entry,"isDisposed")){Restore();DisposeEntry();profile=found;main=NativeUI.Get(NativeUI.Get(profile,"contentPane"),"com_Main");if(main==null)return;
     originals=new[]{NativeUI.Get(main,"btn_Data"),NativeUI.Get(main,"btn_Battle"),NativeUI.Get(main,"btn_Replay")};template=originals[2];if(template==null)return;
@@ -105,10 +135,21 @@ namespace AstralPersonalMod {
     oldX=new float[3];oldY=new float[3];oldW=new float[3];oldH=new float[3];for(int i=0;i<3;i++){oldX[i]=NativeUI.Float(originals[i],"x");oldY[i]=NativeUI.Float(originals[i],"y");oldW[i]=NativeUI.Float(originals[i],"width");oldH[i]=NativeUI.Float(originals[i],"height");}
     Plugin.Instance.Log.LogInfo("Own-profile statistics button attached.");
    }
-   NativeUI.Set(entry,"visible",true);LayoutEntry();MatchEntryStyle();
+   NativeUI.Set(entry,"visible",true);RefreshEntryStyle();
   }
-  void DisposeEntry(){if(entry!=null)try{if(!NativeUI.Bool(entry,"isDisposed"))NativeUI.Call(entry,"Dispose");}catch{}entry=null;}
-  void Restore(){if(originals==null||oldX==null)return;for(int i=0;i<3;i++)try{if(!NativeUI.Bool(originals[i],"isDisposed")){NativeUI.Call(originals[i],"SetXY",oldX[i],oldY[i]);NativeUI.Call(originals[i],"SetSize",oldW[i],oldH[i]);}}catch{} }
+  void DisposeEntry(){
+   if(entry!=null){var pointer=entry.Pointer;clicks.Remove(pointer);paints.Remove(pointer);if(pressed==pointer)pressed=IntPtr.Zero;if(hover==pointer)hover=IntPtr.Zero;try{if(!NativeUI.Bool(entry,"isDisposed"))NativeUI.Call(entry,"Dispose");}catch{}}
+   entry=null;entryStampValid=false;
+  }
+  void Restore(){if(originals==null||oldX==null||!entryLayoutApplied)return;entryLayoutApplied=false;entryStampValid=false;for(int i=0;i<3;i++)try{if(!NativeUI.Bool(originals[i],"isDisposed")){NativeUI.Call(originals[i],"SetXY",oldX[i],oldY[i]);NativeUI.Call(originals[i],"SetSize",oldW[i],oldH[i]);}}catch{} }
+  void RefreshEntryStyle(){
+   var format=NativeUI.Get(NativeUI.Call(template,"GetTextField"),"textFormat");string currentFont=NativeUI.Text(NativeUI.Get(format,"font"));int size=(int)NativeUI.Long(format,"size");bool bold=NativeUI.Bool(format,"bold");
+   float width=NativeUI.Float(template,"width"),height=NativeUI.Float(template,"height"),sx=NativeUI.Float(template,"scaleX"),sy=NativeUI.Float(template,"scaleY");
+   if(entryStampValid&&entryLayoutApplied&&styleScreenWidth==Screen.width&&styleScreenHeight==Screen.height&&styleGeneration==RuntimeGameCatalog.Generation&&styleFont==currentFont&&styleFontSize==size&&styleBold==bold&&styleWidth==width&&styleHeight==height&&styleScaleX==sx&&styleScaleY==sy)return;
+   entryStampValid=false;entryLayoutApplied=true;LayoutEntry();MatchEntryStyle();
+   styleScreenWidth=Screen.width;styleScreenHeight=Screen.height;styleGeneration=RuntimeGameCatalog.Generation;styleFont=currentFont;styleFontSize=size;styleBold=bold;
+   styleWidth=NativeUI.Float(template,"width");styleHeight=NativeUI.Float(template,"height");styleScaleX=NativeUI.Float(template,"scaleX");styleScaleY=NativeUI.Float(template,"scaleY");entryStampValid=true;RuntimeDiagnostics.Event("profile_style_refresh");
+  }
   static void MatchProfilePart(IObject source,IObject target){
    NativeUI.Call(target,"SetPivot",NativeUI.Float(source,"pivotX"),NativeUI.Float(source,"pivotY"),NativeUI.Bool(source,"pivotAsAnchor"));
    NativeUI.Call(target,"SetSize",NativeUI.Float(source,"width"),NativeUI.Float(source,"height"));
@@ -176,7 +217,7 @@ namespace AstralPersonalMod {
   void Build(){
    window=NativeUI.New("FairyGUI.Window");pane=Component(null,0,0,W,H);NativeUI.Set(pane,"opaque",true);
    Round(pane,0,0,W,H,paper,24);Round(pane,0,0,W,9,pink,4);Round(pane,18,18,214,82,lavender,18);
-   Label(pane,"내 전적",34,20,190,38,31,true);collectionLabel=Label(pane,"수집 상태 확인 중",35,58,195,18,12);status=Label(pane,"플레이 기록 확인 중",35,79,195,18,12);
+   Label(pane,"내 전적",34,20,190,38,31,true);collectionLabel=Label(pane,"수집 상태 확인 중",35,58,195,18,12);shownCollectionLabel=shownCollectionKind=null;status=Label(pane,"플레이 기록 확인 중",35,79,195,18,12);
    Round(pane,255,18,345,82,rose,16);Round(pane,610,18,350,82,lavender,16);
    var a=Label(pane,"PvE · 협력전",271,27,310,23,14,true);TextColor(a,pink);pveSummary=Label(pane,"기록 확인 중",271,54,313,29,20,true);
    var b=Label(pane,"PvP · 경쟁전",626,27,310,23,14,true);TextColor(b,accent);pvpSummary=Label(pane,"기록 확인 중",626,54,318,29,20,true);
@@ -190,26 +231,30 @@ namespace AstralPersonalMod {
    footer=Label(pane,"",34,697,770,28,14);previousButton=NewButton(pane,"이전","PreviousPage",824,691,110,40);nextButton=NewButton(pane,"다음","NextPage",946,691,110,40);
    NativeUI.Set(window,"contentPane",pane);NativeUI.Set(window,"modal",true);NativeUI.Set(window,"name","astral_personal_window");
   }
-  public void OpenStats(){try{if(owner<=0)return;RuntimeDiagnostics.View(true);if(window==null||NativeUI.Bool(window,"isDisposed"))Build();EnsureFrontOrder();NativeUI.Call(window,"Show");NativeUI.Call(window,"BringToFront");open=true;catalogGeneration=RuntimeGameCatalog.Generation;nextCollectionRead=0;BlockProfile();Fit();selected=-1;cardKey=null;diceView=chipView=cardView=false;Request();nextRequest=Time.realtimeSinceStartup+15;nextRead=0;Render();}catch(Exception e){RuntimeDiagnostics.Error("profile.open",e);Plugin.Instance.Log.LogWarning("Could not open statistics: "+e.GetType().Name+" / "+e.Message);Diagnostic("open_failed");CloseStats();if(window!=null){try{NativeUI.Call(window,"Dispose");}catch{}window=null;}}}
-  public void CloseStats(){RuntimeDiagnostics.View(false);diceView=false;chipView=false;selectedPlayer=0;portraits.Clear();cardView=false;cardKey=null;try{CloseDropdown();}finally{ReleaseModal();open=false;selected=-1;if(window!=null)try{NativeUI.Call(window,"Hide");}catch{}} }
+  public void OpenStats(){try{if(owner<=0)return;RuntimeDiagnostics.View(true);placement.Invalidate();nextFit=0;if(window==null||NativeUI.Bool(window,"isDisposed"))Build();EnsureFrontOrder();windowHidden=false;NativeUI.Call(window,"Show");NativeUI.Call(window,"BringToFront");open=true;catalogGeneration=RuntimeGameCatalog.Generation;nextCollectionRead=0;BlockProfile();Fit();selected=-1;cardKey=null;diceView=chipView=cardView=false;Request();nextRequest=Time.realtimeSinceStartup+15;nextRead=0;Render();}catch(Exception e){RuntimeDiagnostics.Error("profile.open",e);Plugin.Instance.Log.LogWarning("Could not open statistics: "+e.GetType().Name+" / "+e.Message);Diagnostic("open_failed");CloseStats();if(window!=null){try{NativeUI.Call(window,"Dispose");}catch{}window=null;}}}
+  public void CloseStats(){
+   RuntimeDiagnostics.View(false);if(!open&&windowHidden&&shield==null&&blockedProfile==null&&dropdown==null)return;
+   diceView=false;chipView=false;selectedPlayer=0;portraits.Clear();cardView=false;cardKey=null;
+   try{CloseDropdown();}finally{ReleaseModal();open=false;selected=-1;if(window==null)windowHidden=true;else try{if(!NativeUI.Bool(window,"isDisposed"))NativeUI.Call(window,"Hide");windowHidden=true;}catch{}}
+  }
   void EnsureFrontOrder(){if(window==null||profile==null)return;long order=NativeUI.Long(profile,"sortingOrder");int target=(int)Math.Min(int.MaxValue-1,Math.Max(0,order)+2);if(NativeUI.Long(window,"sortingOrder")!=target)NativeUI.Set(window,"sortingOrder",target);}
   void BlockProfile(){if(blockedProfile!=null||profile==null)return;blockedProfile=profile;savedProfileTouchable=NativeUI.Bool(profile,"touchable");NativeUI.Set(profile,"touchable",false);}
-  void ReleaseModal(){if(shield!=null){try{NativeUI.Call(shield,"Dispose");}catch{}shield=shieldPaint=null;shieldWidth=shieldHeight=0;}if(blockedProfile!=null){try{if(!NativeUI.Bool(blockedProfile,"isDisposed"))NativeUI.Set(blockedProfile,"touchable",savedProfileTouchable);}catch{}blockedProfile=null;}}
+  void ReleaseModal(){if(shield!=null){try{NativeUI.Call(shield,"Dispose");}catch{}shield=shieldPaint=null;shieldWidth=shieldHeight=0;shieldOrder=int.MinValue;}if(blockedProfile!=null){try{if(!NativeUI.Bool(blockedProfile,"isDisposed"))NativeUI.Set(blockedProfile,"touchable",savedProfileTouchable);}catch{}blockedProfile=null;}}
   void Fit(){
    EnsureFrontOrder();var root=NativeUI.Static("FairyGUI.GRoot","inst");float rw=NativeUI.Float(root,"width"),rh=NativeUI.Float(root,"height");if(rw<=0||rh<=0)return;
    if(shield==null){shield=Component(root,0,0,rw,rh);NativeUI.Set(shield,"opaque",true);NativeUI.Set(shield,"name","astral_personal_input_shield");shieldPaint=NativeUI.New("FairyGUI.GGraph");NativeUI.Set(shieldPaint,"touchable",false);NativeUI.Call(shield,"AddChild",shieldPaint);}
-   int order=(int)NativeUI.Long(window,"sortingOrder");NativeUI.Set(shield,"sortingOrder",Math.Max(0,order-1));
+   int order=(int)NativeUI.Long(window,"sortingOrder");int targetOrder=Math.Max(0,order-1);if(shieldOrder!=targetOrder){NativeUI.Set(shield,"sortingOrder",targetOrder);shieldOrder=targetOrder;}
    if(Math.Abs(rw-shieldWidth)>.1f||Math.Abs(rh-shieldHeight)>.1f){NativeUI.Call(shield,"SetSize",rw,rh);NativeUI.Call(shieldPaint,"SetSize",rw,rh);NativeUI.Call(shieldPaint,"DrawRect",rw,rh,0,new Color(0,0,0,0),new Color(.14f,.05f,.25f,.84f));shieldWidth=rw;shieldHeight=rh;}
-   var bounds=StatsLayout.Fit(rw,rh);NativeUI.Call(window,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(window,"SetXY",bounds.X,bounds.Y);
+   var bounds=StatsLayout.Fit(rw,rh);if(placement.Changed(rw,rh,bounds)){try{NativeUI.Call(window,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(window,"SetXY",bounds.X,bounds.Y);RuntimeDiagnostics.Event("window_refit");}catch{placement.Invalidate();throw;}}
   }
   void ReadCollectionStatus(){
    if(collectionLabel==null)return;string label="수집 준비 중",kind="waiting";
    try{string path=Path.Combine(Plugin.Instance.DataDir,"plugin-collection-status.json");if(File.Exists(path)&&new FileInfo(path).Length<=8192){var state=JsonSerializer.Deserialize<CollectionState>(File.ReadAllText(path));long now=DateTimeOffset.UtcNow.ToUnixTimeSeconds();if(state!=null&&state.schema==1&&state.owner_id==owner&&now-state.heartbeat>=-5&&now-state.heartbeat<=45&&!string.IsNullOrEmpty(state.label)&&state.label.Length<=80){label=state.label;kind=state.kind;}else if(state!=null&&state.owner_id==owner)label="수집 상태 확인 중";}}
    catch{label="수집 상태 확인 중";}
-   NativeUI.Set(collectionLabel,"text",label);TextColor(collectionLabel,kind=="ready"?Rgb(0x236B45):kind=="attention"||kind=="retry"?Rgb(0x927019):kind=="working"?accent:ink);
+   if(shownCollectionLabel!=label){NativeUI.Set(collectionLabel,"text",label);shownCollectionLabel=label;}if(shownCollectionKind!=kind){shownCollectionKind=kind;TextColor(collectionLabel,kind=="ready"?Rgb(0x236B45):kind=="attention"||kind=="retry"?Rgb(0x927019):kind=="working"?accent:ink);}
   }
   void Request(){string json="{\"owner_id\":"+owner+",\"updated_at\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"tab\":"+tab+",\"mode\":"+mode+",\"map\":"+map+",\"hero\":"+hero+",\"difficulty\":"+difficulty+",\"page\":"+page+"}";var target=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-request.json");File.WriteAllText(target+".part",json);File.Move(target+".part",target,true);}
-  void ReadSnapshot(){string path=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-snapshot.json");if(!File.Exists(path))return;if(new FileInfo(path).Length>4194304)return;var next=JsonSerializer.Deserialize<StatsSnapshot>(File.ReadAllText(path));if(next==null||next.schema!=1||next.owner_id!=owner||next.tab!=tab||next.mode!=mode||next.map!=map||next.hero!=hero||next.difficulty!=difficulty||next.page!=page||DateTimeOffset.UtcNow.ToUnixTimeSeconds()-next.generated_at>60)return;if(snapshot!=null&&snapshot.generated_at==next.generated_at)return;bool unchanged=snapshot!=null&&PresentationKey(snapshot)==PresentationKey(next);snapshot=next;modeChoices=next.modes;mapChoices=next.maps;heroChoices=next.heroes;difficultyChoices=next.difficulties;if(!unchanged)Render();}
+  void ReadSnapshot(){string path=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-snapshot.json");if(!File.Exists(path))return;var info=new FileInfo(path);if(info.Length>4194304)return;if(snapshot!=null&&snapshotFileTicks==info.LastWriteTimeUtc.Ticks&&snapshotFileLength==info.Length)return;var next=JsonSerializer.Deserialize<StatsSnapshot>(File.ReadAllText(path));if(next==null||next.schema!=1||next.owner_id!=owner||next.tab!=tab||next.mode!=mode||next.map!=map||next.hero!=hero||next.difficulty!=difficulty||next.page!=page||DateTimeOffset.UtcNow.ToUnixTimeSeconds()-next.generated_at>60)return;if(snapshot!=null&&snapshot.generated_at==next.generated_at){snapshotFileTicks=info.LastWriteTimeUtc.Ticks;snapshotFileLength=info.Length;return;}string nextPresentation=PresentationKey(next);string previousPresentation=snapshot!=null?(snapshotSelection==selected&&snapshotPresentation!=null?snapshotPresentation:PresentationKey(snapshot)):null;bool unchanged=snapshot!=null&&previousPresentation==nextPresentation;snapshot=next;snapshotPresentation=nextPresentation;snapshotSelection=selected;snapshotFileTicks=info.LastWriteTimeUtc.Ticks;snapshotFileLength=info.Length;modeChoices=next.modes;mapChoices=next.maps;heroChoices=next.heroes;difficultyChoices=next.difficulties;if(!unchanged)Render();}
   string PresentationKey(StatsSnapshot value){
    // Ignore heartbeat timestamps. Keep the existing loaders alive while visible content is unchanged.
    if(selected>=0&&value.details!=null&&selected<value.details.Length)return JsonSerializer.Serialize(new {value.mode,value.map,value.hero,value.difficulty,detail=value.details[selected],value.summary,value.pve_summary,value.pvp_summary});
