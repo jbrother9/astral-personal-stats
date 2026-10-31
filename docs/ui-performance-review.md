@@ -18,3 +18,7 @@ Reference reviewed: https://github.com/TSM701/BetterAstralParty/tree/1.6.5 . Act
 Hidden/disposed/off-stage UI branches are pruned. Direct root windows take priority, validated profiles are reused, and deep traversal is incremental. Entry style stamps and window placement caches avoid unchanged writes. Positive reflection metadata is cached without caching mutable UI values. Unchanged snapshot files skip decoding. Closing is idempotent and disposal clears own click bindings.
 
 Build, visibility API checks, deep/wide search, hidden/disposed/cross-scene cache invalidation, unchanged placement tests, frozen worker self-test and cached replay analysis passed. No game FPS comparison or affected combined-use crash reproduction was performed. No additional native hooks or class injection were introduced.
+
+## 0.8.9 lobby entry
+
+The small entry now resides on the root while UI.UIHomePanel is visible, between the profile and currency display. Profile discovery is retained only for history observation; it no longer creates or styles an entry. The modal blocks the lobby and uses a root shield. Lobby visibility and account changes govern cleanup. Real-game placement/click verification remains pending.

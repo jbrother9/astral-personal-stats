@@ -13,7 +13,7 @@ using IType = Il2CppSystem.Type;
 using IFlags = Il2CppSystem.Reflection.BindingFlags;
 
 namespace AstralPersonalMod {
- [BepInPlugin("local.astral.personalcollector", "Astral Personal Collector", "0.8.8")]
+ [BepInPlugin("local.astral.personalcollector", "Astral Personal Collector", "0.8.9")]
  public sealed class Plugin : BasePlugin {
   internal static Plugin Instance;
   internal string Backend, Python, WorkerExecutable, DataDir;
@@ -33,14 +33,14 @@ namespace AstralPersonalMod {
    Python=Config.Bind<string>("Paths","PythonExecutable","","Optional legacy Python runtime; not needed for distribution").Value;
    DataDir=Config.Bind<string>("Paths","DataDirectory",Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AstralPersonalStats"),"Personal database, configuration and replay cache").Value;
    Directory.CreateDirectory(DataDir);Directory.CreateDirectory(Path.Combine(DataDir,"plugin-inbox"));
-   RuntimeDiagnostics.Initialize(DataDir,"0.8.8");
+   RuntimeDiagnostics.Initialize(DataDir,"0.8.9");
    // Do not use ClassInjector/AddComponent: the installed bridge's metadata hook crashes this HybridCLR game.
    watcher=new Watcher();profileUI=new ProfileStatsUI();gameCatalog=new RuntimeGameCatalog();
    var update=typeof(UnityEngine.EventSystems.EventSystem).GetMethod("Update",BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic);
    if(update==null)throw new MissingMethodException("EventSystem.Update");
    framePatch=new Harmony("local.astral.personalcollector.frame");
    framePatch.Patch(update,postfix:new HarmonyMethod(typeof(Plugin).GetMethod(nameof(OnUnityFrame),BindingFlags.Static|BindingFlags.NonPublic)));
-   Log.LogInfo("Personal collector 0.8.8 loaded without class injection. Waiting for existing Unity event loop.");
+   Log.LogInfo("Personal collector 0.8.9 loaded without class injection. Waiting for existing Unity event loop.");
   }
   private static void OnUnityFrame() {
    if(Instance==null||watcher==null||profileUI==null)return;
@@ -121,7 +121,7 @@ namespace AstralPersonalMod {
   private static bool Truth(IObject value){return NativeValue.Boolean(value);}
   private void Status(string status) {
    Plugin p=Plugin.Instance;
-   string json="{\"version\":\"0.8.8\",\"game_pid\":"+Process.GetCurrentProcess().Id+",\"owner_id\":"+owner+",\"owner_verified\":"+(owner>0?"true":"false")+",\"canonical_id\":"+canonicalId+",\"candidate_id\":"+candidateId+",\"career_account_id\":"+careerAccountId+",\"history_status\":\""+historyStatus+"\",\"history_seen\":"+historySeen+",\"room_present\":"+(roomPresent?"true":"false")+",\"room_state\":"+observedState+",\"self_id\":"+observedSelf+",\"start_time\":"+startTime+",\"room_id\":"+roomId+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+status+"\"}";
+   string json="{\"version\":\"0.8.9\",\"game_pid\":"+Process.GetCurrentProcess().Id+",\"owner_id\":"+owner+",\"owner_verified\":"+(owner>0?"true":"false")+",\"canonical_id\":"+canonicalId+",\"candidate_id\":"+candidateId+",\"career_account_id\":"+careerAccountId+",\"history_status\":\""+historyStatus+"\",\"history_seen\":"+historySeen+",\"room_present\":"+(roomPresent?"true":"false")+",\"room_state\":"+observedState+",\"self_id\":"+observedSelf+",\"start_time\":"+startTime+",\"room_id\":"+roomId+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+status+"\"}";
    string temp=Path.Combine(p.DataDir,"plugin-state.json.part");File.WriteAllText(temp,json);
    string target=Path.Combine(p.DataDir,"plugin-state.json");
    if(File.Exists(target))File.Delete(target);File.Move(temp,target);
