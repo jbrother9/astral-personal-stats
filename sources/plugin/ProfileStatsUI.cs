@@ -331,7 +331,7 @@ namespace AstralPersonalMod {
    if(metricIndex>=0){DrawMetricDetail(d,current);return;}
    var rows=current?.rows??d.rows;
    Label(body,"지표",360,33,305,24,16);Label(body,"경기 합계",690,33,125,24,16);Label(body,"선택 유저 턴당 평균",835,33,210,24,16);
-   for(int i=0;rows!=null&&i<rows.Length&&i<17;i++){float y=59+i*19;var row=Component(body,352,y,702,19);NativeUI.Set(row,"opaque",true);Round(row,0,0,702,19,i%2==0?Color.white:rose,5);Label(row,rows[i][0],8,1,320,19,14);Label(row,rows[i][1],338,1,125,19,14);Label(row,rows[i][2],483,1,165,19,14);Label(row,"›",674,0,24,19,16);int metric=i;Bind(row,()=>{metricIndex=metric;metricPage=0;Request();Render();});}
+   for(int i=0;rows!=null&&i<rows.Length&&i<17;i++){float y=59+i*19;var row=Component(body,352,y,702,19);NativeUI.Set(row,"opaque",true);Round(row,0,0,702,19,i%2==0?Color.white:rose,5);Label(row,rows[i][0],8,1,320,19,14);Label(row,rows[i][1],338,1,125,19,14);Label(row,rows[i][2],483,1,165,19,14);if(i>0){Label(row,"›",674,0,24,19,16);int metric=i;Bind(row,()=>{metricIndex=metric;metricPage=0;Request();Render();});}}
    NativeUI.Set(footer,"text","");
   }
   void DrawMetricDetail(GameDetail game,MatchAppearance participant){
@@ -342,7 +342,7 @@ namespace AstralPersonalMod {
    ActionButton(body,"이전",()=>{if(metricPage>0){metricPage--;Request();Render();}},862,37,88,32);
    ActionButton(body,"다음",()=>{if(metricPage+1<detail.pages){metricPage++;Request();Render();}},960,37,88,32);
    for(int i=0;detail.rows!=null&&i<detail.rows.Length;i++){
-    float y=82+i*31;Round(body,352,y,702,29,i%2==0?Color.white:rose,5);Label(body,detail.rows[i][0],362,y+3,95,24,14);Label(body,detail.rows[i][1],465,y+3,580,24,14);
+    float y=82+i*31;Round(body,352,y,702,29,i%2==0?Color.white:rose,5);Label(body,detail.rows[i][0],362,y+3,95,24,14);var eventText=Label(body,detail.rows[i][1],465,y+1,580,27,13);NativeUI.Set(eventText,"singleLine",false);NativeUI.Set(eventText,"tooltips",detail.rows[i][1]);
    }
    var note=Label(body,detail.note??"",360,337,690,42,13);NativeUI.Set(note,"singleLine",false);NativeUI.Set(footer,"text",(detail.page+1)+" / "+detail.pages+" 페이지");
   }

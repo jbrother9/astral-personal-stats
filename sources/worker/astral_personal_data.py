@@ -39,12 +39,16 @@ def analyze(data,summary,owner):
  person=next((p for p in summary['participants'] if p['player_id']==owner),None)
  if person is None:raise ValueError('Own player not in replay')
  events=[];stats=dict(turns=0,deaths=0,npc_last_hits=0,effect_cards=0,battle_cards=0,skills=0)
- pos=frame=roundno=0;actor=0;level=None
+ pos=frame=roundno=0;actor=0;level=None;known_cards={}
+ def remember_cards(raw_cards):
+  for raw in raw_cards:
+   card=replay.protobuf(raw);uid,definition=replay.first(card,1),replay.first(card,2)
+   if uid>0 and definition>0:known_cards[uid]=definition
  def add(kind,detail):
   events.append((summary['replay_id'],owner,frame,len(events),roundno,int(actor==owner),kind,json.dumps(detail,ensure_ascii=False)))
  while pos<len(data):
   op,n=struct.unpack_from('>HI',data,pos);pos+=6;body=data[pos:pos+n];pos+=n;frame+=1
-  if op not in (1003,1113,1015,5056,5036,1115,1040,5022,5028,5212):continue
+  if op not in (1003,1113,1015,5056,5036,1115,1040,5022,5028,5212,1109):continue
   f=replay.protobuf(body);pid=replay.first(f,1)
   if op==1015:
    roundno=replay.first(f,1);actor=replay.first(f,5)
@@ -55,14 +59,15 @@ def analyze(data,summary,owner):
    for raw in room.get(9,[]):
     p=replay.protobuf(raw)
     if replay.first(p,1)!=owner:continue
-    hero=replay.protobuf(replay.first(p,10,b''));current=replay.first(hero,33)
+    hero=replay.protobuf(replay.first(p,10,b''));remember_cards(hero.get(8,[]));current=replay.first(hero,33)
     if current!=level:
      add('성장 상태',{'previous':level,'current':current,'snapshot_round':replay.first(room,14),'note':'게임 내부 성장 값; 스냅샷에서 확인한 시점'});level=current
+  elif op==1109 and replay.first(f,2)==owner:remember_cards(f.get(1,[]))
   elif op==5056 and pid==owner:
    if replay.first(f,8):stats['skills']+=1;add('스킬',{'skill_id':replay.first(f,9)})
-   if replay.first(f,2) and not replay.first(f,8):stats['effect_cards']+=1;add('효과 카드',{'card_id':replay.first(f,2)})
+   if replay.first(f,2) and not replay.first(f,8):stats['effect_cards']+=1;add('효과 카드',{'card_id':replay.first(f,2),'definition_id':replay.first(f,2)})
   elif op==5036 and pid==owner and replay.first(f,2) and not replay.first(f,3):
-   stats['battle_cards']+=1;add('전투 카드',{'card_id':replay.first(f,2)})
+   stats['battle_cards']+=1;add('전투 카드',{'card_id':replay.first(f,2),'definition_id':known_cards.get(replay.first(f,2))})
   elif op==1115:
    if pid==owner:stats['deaths']+=1;add('사망',{'killer_id':replay.first(f,3)})
    elif replay.first(f,3)==owner and pid not in [p['player_id'] for p in summary['participants']]:stats['npc_last_hits']+=1;add('NPC 마지막 공격',{'target_hero_id':replay.first(f,2)})
@@ -70,6 +75,7 @@ def analyze(data,summary,owner):
   elif op==5028 and pid==owner:add('이동',{'distance':len(cards.fixed32_values(f.get(2,[])))})
   elif op==5212 and pid==owner and replay.first(f,2):add('칩 선택 응답',{'relic_id':replay.first(f,2),'is_reroll':bool(replay.first(f,3))})
   elif op==1040:
+   cause=replay.protobuf(replay.first(f,2,b''));origin={'cause_type':replay.first(cause,1),'cause_id':replay.first(cause,3)}
    for raw in f.get(4,[]):
     effect=replay.protobuf(raw)
     target=replay.first(effect,1)
@@ -77,11 +83,13 @@ def analyze(data,summary,owner):
      hp=replay.protobuf(effect[3][0]);source=replay.first(hp,9);damage_type=replay.first(hp,8)
      if source==owner and target and target!=owner and 1<=damage_type<=11:
       before=signed32(replay.first(hp,3));after=signed32(replay.first(hp,4));amount=max(0,max(0,before)-max(0,after))
-      if amount:add('가한 피해',{'amount':amount,'target':target,'damage_type':damage_type})
+      if amount:add('가한 피해',{'amount':amount,'target':target,'damage_type':damage_type,**origin})
+      requested=signed32(replay.first(hp,2))
+      if damage_type==7 and requested<0:add('전투 피해',{'amount':-requested,'target':target,'damage_type':7,**origin})
     if target!=owner:continue
     for field,kind in ((2,'골드 변화'),(3,'HP 변화')):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
-     v=replay.protobuf(effect[field][0]);add(kind,{'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0})
+     v=replay.protobuf(effect[field][0]);add(kind,{'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
  settlement=summary.get('settlement',{}).get(str(owner))
  if settlement is not None:
   stats['deaths']=settlement['deaths'];add('최종 결과',settlement)
@@ -242,7 +250,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=8
+INSIGHTS_VERSION=9
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
