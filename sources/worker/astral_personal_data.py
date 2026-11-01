@@ -36,9 +36,44 @@ def init(db):
  ''');db.commit()
 def signed32(x):return x-2**32 if x>=2**31 else x
 
-def analyze(data,summary,owner):
+def shop_transfers(data,players):
+ # A three-packet window bounds extra memory; amount alone never identifies a transfer.
+ from collections import deque
+ window=deque(maxlen=3);result=[];pos=frame=roundno=0
+ def change(packet,pid):
+  _,op,raw,_=packet
+  if op!=1040:return None
+  f=replay.protobuf(raw);cause=replay.protobuf(replay.first(f,2,b''))
+  if replay.first(cause,1)!=14:return None
+  values=[]
+  for raw_effect in f.get(4,[]):
+   effect=replay.protobuf(raw_effect)
+   if replay.first(effect,1)!=pid or 2 not in effect:continue
+   value=replay.protobuf(replay.first(effect,2,b''))
+   if replay.first(value,1)!=pid:return None
+   values.append(signed32(replay.first(value,4))-signed32(replay.first(value,3)))
+  return values[0] if len(values)==1 else None
+ while pos<len(data):
+  op,n=struct.unpack_from('>HI',data,pos);pos+=6;raw=data[pos:pos+n];pos+=n;frame+=1
+  if op==1015:roundno=replay.first(replay.protobuf(raw),1)
+  elif op in (1003,1113):
+   room=replay.protobuf(replay.first(replay.protobuf(raw),1 if op==1003 else 2,b''));roundno=replay.first(room,14,roundno)
+  window.append((frame,op,raw,roundno))
+  if len(window)!=3 or window[0][1]!=5216:continue
+  declaration=window[0];f=replay.protobuf(declaration[2]);sender,recipient=replay.first(f,1),replay.first(f,3)
+  if sender==recipient or sender not in players or recipient not in players or f.get(2):continue
+  debit,credit=change(window[1],sender),change(window[2],recipient)
+  if debit is None or credit is None or debit>=0 or credit!=-debit:continue
+  result.append({'sender':sender,'recipient':recipient,'amount':credit,'round':declaration[3],'debit_frame':window[1][0],'credit_frame':window[2][0]})
+ return result
+
+
+def analyze(data,summary,owner,transfers=None):
  person=next((p for p in summary['participants'] if p['player_id']==owner),None)
  if person is None:raise ValueError('Own player not in replay')
+ if transfers is None:transfers=shop_transfers(data,{p['player_id'] for p in summary['participants']})
+ transfer_frames={t['debit_frame']:{'direction':'sent','counterpart':t['recipient'],'amount':t['amount']} for t in transfers if t['sender']==owner}
+ transfer_frames.update({t['credit_frame']:{'direction':'received','counterpart':t['sender'],'amount':t['amount']} for t in transfers if t['recipient']==owner})
  events=[];stats=dict(turns=0,deaths=0,npc_last_hits=0,effect_cards=0,battle_cards=0,skills=0)
  pos=frame=roundno=0;actor=0;level=None;star_level=None;known_cards={};battle_id=0;opponent=0;battle_bonuses={}
  def target_ids(values):
@@ -118,7 +153,9 @@ def analyze(data,summary,owner):
     if target!=owner:continue
     for field,kind in ((2,'골드 변화'),(3,'HP 변화')):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
-     v=replay.protobuf(effect[field][0]);delta=signed32(replay.first(v,4))-signed32(replay.first(v,3));star_change=('reward' if delta>0 else 'cost' if field==2 and delta<0 else None) if star_up else None;add(kind,{'star_change':star_change,'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
+     v=replay.protobuf(effect[field][0]);delta=signed32(replay.first(v,4))-signed32(replay.first(v,3));star_change=('reward' if delta>0 else 'cost' if field==2 and delta<0 else None) if star_up else None;add(kind,{'transfer':transfer_frames.get(frame) if field==2 else None,'star_change':star_change,'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
+   transfer=transfer_frames.get(frame)
+   if transfer and transfer['direction']=='sent':add('골드 전달',{'amount':transfer['amount'],'target':transfer['counterpart']})
  # A repeated definition in one battle is ambiguous; do not assign a bonus by guessing order.
  battle_events={}
  for i,event in enumerate(events):
@@ -288,7 +325,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=11
+INSIGHTS_VERSION=12
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
@@ -320,15 +357,15 @@ def save_insights(db,data,summary,owner):
   entity=entities.get(killer)
   if not killer or killer in ambiguous or entity is None or killer==owner:unknown+=1;continue
   counter[(entity['kind'],entity['hero_id'])]+=1
- participants=[]
+ participants=[];transfers=shop_transfers(data,{p['player_id'] for p in summary['participants']})
  for p in summary['participants']:
-  record,events=analyze(data,summary,p['player_id'])
+  record,events=analyze(data,summary,p['player_id'],transfers)
   timeline=[]
   for event in events:
    if event[6] in ('성장 상태','최종 결과'):continue
    detail=json.loads(event[7]);source=detail.get('killer_id',detail.get('source',detail.get('target',0)))
    entity=entities.get(source) if source not in ambiguous else None
-   timeline.append({'round':event[4] or None,'kind':event[6],'detail':detail,'entity':entity,'entity_id':source,'targets':[{'id':target,'entity':entities.get(target) if target not in ambiguous else None} for target in detail.get('targets',[])],'opponent':{'id':detail.get('opponent_id',0),'entity':entities.get(detail.get('opponent_id')) if detail.get('opponent_id') not in ambiguous else None}})
+   timeline.append({'round':event[4] or None,'kind':event[6],'detail':detail,'entity':entity,'entity_id':source,'transfer_party':{'id':(detail.get('transfer') or {}).get('counterpart',0),'entity':entities.get((detail.get('transfer') or {}).get('counterpart'))},'targets':[{'id':target,'entity':entities.get(target) if target not in ambiguous else None} for target in detail.get('targets',[])],'opponent':{'id':detail.get('opponent_id',0),'entity':entities.get(detail.get('opponent_id')) if detail.get('opponent_id') not in ambiguous else None}})
   participants.append({'player_id':p['player_id'],'timeline':timeline,'totals':summarize_events(record,events),'cards':cards.analyze(data,p['player_id']),'chips':chips.analyze(data,p['player_id']),'dice':dice.analyze(data,p['player_id'])})
  value={'participants':participants,'killers':[{'kind':kind,'hero_id':hero,'count':count} for (kind,hero),count in sorted(counter.items())],'unknown_deaths':unknown,'deaths':len(deaths)}
  db.execute('INSERT OR REPLACE INTO personal_match_insights VALUES (?,?,?,?)',(summary['replay_id'],owner,INSIGHTS_VERSION,json.dumps(value,ensure_ascii=False)))
