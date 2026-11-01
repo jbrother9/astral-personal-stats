@@ -1,6 +1,6 @@
 """Standalone plugin worker and offline diagnostics entry point."""
 import argparse,json,pathlib,sys,os
-VERSION='0.8.24'
+VERSION='0.8.25'
 
 def self_test(base=None):
  import tempfile,struct,ssl

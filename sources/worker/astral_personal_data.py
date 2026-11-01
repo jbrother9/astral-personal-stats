@@ -161,9 +161,54 @@ def purchase_gold_cards(data,players):
  return {b['debit_frame']:{'player_id':b['player_id'],'card_ids':b['card_ids']} for b in batches if 'debit_frame' in b and 'card_ids' in b}
 
 
-def analyze(data,summary,owner,transfers=None,kill_rewards=None,purchases=None):
+def buff_effect_sources(data):
+ # Resolve instance IDs in the holder's container at the effect frame, never from future records.
+ active={};result={};pos=frame=0
+ def read_buff(raw,previous=None):
+  b=replay.protobuf(raw);map_id=replay.first(b,1)
+  if isinstance(replay.first(b,2),bytes):b=replay.protobuf(replay.first(b,2,b''))
+  uid=replay.first(b,1) or map_id;definition=replay.first(b,2)
+  if type(uid) is not int or type(definition) is not int or uid<=0:return None
+  old=previous.get(uid,{}) if previous else {};source=replay.protobuf(replay.first(b,50,b'')) if 50 in b else None
+  return {'instance_id':uid,'definition_id':definition or old.get('definition_id',0),'source_type':replay.first(source,1) if source is not None else old.get('source_type',0),'source_id':replay.first(source,2) if source is not None else old.get('source_id',0)}
+ while pos<len(data):
+  op,n=struct.unpack_from('>HI',data,pos);pos+=6;raw=data[pos:pos+n];pos+=n;frame+=1
+  if op in (1003,1113):
+   active.clear();room=replay.protobuf(replay.first(replay.protobuf(raw),1 if op==1003 else 2,b''))
+   for b in room.get(9,[])+room.get(10,[]):
+    person=replay.protobuf(b);holder=replay.first(person,1);hero=replay.protobuf(replay.first(person,10,b''));container={}
+    for raw_buff in hero.get(4,[]):
+     buff=read_buff(raw_buff)
+     if buff and buff['definition_id']>0:container[buff['instance_id']]=buff
+    active[holder]=container
+  if op!=1040:continue
+  f=replay.protobuf(raw);cause=replay.protobuf(replay.first(f,2,b''));holder=replay.first(f,1);uid=replay.first(cause,3)
+  before=active.get(holder,{}).get(uid) if replay.first(cause,1)==7 else None
+  for b in f.get(4,[]):
+   effect=replay.protobuf(b)
+   if 6 not in effect:continue
+   change=replay.protobuf(replay.first(effect,6,b''));owner=replay.first(change,1) or replay.first(effect,1);operation=replay.first(change,3);container=active.setdefault(owner,{})
+   if operation==0:
+    replacement={}
+    for raw_buff in change.get(4,[]):
+     buff=read_buff(raw_buff)
+     if buff and buff['definition_id']>0:replacement[buff['instance_id']]=buff
+    active[owner]=replacement
+   elif operation in (1,2,3) and 2 in change:
+    buff=read_buff(replay.first(change,2,b''),container)
+    if not buff:continue
+    if operation==2:container.pop(buff['instance_id'],None)
+    elif buff['definition_id']>0:container[buff['instance_id']]=buff
+  if replay.first(cause,1)==7:
+   buff=before or active.get(holder,{}).get(uid)
+   if buff:result[frame]=dict(buff)
+ return result
+
+
+def analyze(data,summary,owner,transfers=None,kill_rewards=None,purchases=None,buff_refs=None):
  person=next((p for p in summary['participants'] if p['player_id']==owner),None)
  if person is None:raise ValueError('Own player not in replay')
+ if buff_refs is None:buff_refs=buff_effect_sources(data)
  if purchases is None:purchases=purchase_gold_cards(data,{p['player_id'] for p in summary['participants']})
  if kill_rewards is None:kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
  if transfers is None:transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']})
@@ -221,7 +266,7 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None,purchases=None):
   elif op==5028 and pid==owner:add('이동',{'distance':len(cards.fixed32_values(f.get(2,[])))})
   elif op==5212 and pid==owner and replay.first(f,2):add('칩 선택 응답',{'relic_id':replay.first(f,2),'is_reroll':bool(replay.first(f,3))})
   elif op==1040:
-   cause=replay.protobuf(replay.first(f,2,b''));origin={'cause_type':replay.first(cause,1),'cause_id':replay.first(cause,3)}
+   cause=replay.protobuf(replay.first(f,2,b''));origin={'cause_type':replay.first(cause,1),'cause_id':replay.first(cause,3),'buff':buff_refs.get(frame)}
    star_up=False
    for item in f.get(4,[]):
     change=replay.protobuf(item)
@@ -417,7 +462,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=18
+INSIGHTS_VERSION=19
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
@@ -449,9 +494,9 @@ def save_insights(db,data,summary,owner):
   entity=entities.get(killer)
   if not killer or killer in ambiguous or entity is None or killer==owner:unknown+=1;continue
   counter[(entity['kind'],entity['hero_id'])]+=1
- participants=[];transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']});purchases=purchase_gold_cards(data,{p['player_id'] for p in summary['participants']})
+ participants=[];transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']});purchases=purchase_gold_cards(data,{p['player_id'] for p in summary['participants']});buff_refs=buff_effect_sources(data)
  for p in summary['participants']:
-  record,events=analyze(data,summary,p['player_id'],transfers,kill_rewards,purchases)
+  record,events=analyze(data,summary,p['player_id'],transfers,kill_rewards,purchases,buff_refs)
   timeline=[]
   for event in events:
    if event[6] in ('성장 상태','최종 결과'):continue

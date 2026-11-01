@@ -29,7 +29,7 @@ def metric_detail(db,owner,rid,pid,index,page=0):
  title=metric_rows({})[index][0];key=METRIC_KEYS[index];rows=[]
  kinds={'turns':'턴 시작','deaths':'사망','npc_last_hits':'NPC 마지막 공격','effect_cards':'효과 카드','battle_cards':'전투 카드','skills':'스킬','chip_selection_events':'칩 선택 응답','dice_events':'주사위','movement_distance':'이동','damage_dealt':'가한 피해','damage_taken':'HP 변화','max_battle_damage':'전투 피해','transferred_gold':'골드 전달','gold_increase':'골드 변화','gold_decrease':'골드 변화','hp_increase':'HP 변화','hp_decrease':'HP 변화'}
  people={p['player_id']:p for p in personal.appearances(db,rid,owner)}
- heroes=game_catalog.hero_names(db);monsters=game_catalog.names('monsters',db);card_name=card_names.resolver(db)
+ heroes=game_catalog.hero_names(db);monsters=game_catalog.names('monsters',db);card_name=card_names.resolver(db);buff_names=game_catalog.names('buffs',db);skill_names=game_catalog.names('skills',db);chip_names=game_catalog.names('chips',db)
  reasons={1:'스킬',2:'카드',3:'이벤트',5:'운명',6:'점술',7:'버프',8:'지역 버프',9:'칸 효과',10:'폭탄 사망',11:'턴 보상',12:'전투',13:'상점 열기',14:'상점 구매',15:'맵 이벤트',16:'턴 종료',17:'칩 선택',18:'미션',19:'현상금 처치',20:'현상금 방어',21:'보스 합체',22:'방 조건',23:'럭키스타'}
  def transfer_difference(value):
   paid=value.get('amount',0);received=value.get('received',paid);delta=received-paid
@@ -42,6 +42,12 @@ def metric_detail(db,owner,rid,pid,index,page=0):
   code=detail.get('cause_type');label=reasons.get(code,'원인 미확인')
   if label=='원인 미확인':label={1:'스킬',2:'카드',3:'운명',4:'점술',5:'이벤트',6:'칸 효과',7:'전투',8:'버프',9:'소환물',10:'칩 효과',11:'맵 이벤트'}.get(detail.get('damage_type'),'원인 미확인')
   if label=='원인 미확인' and detail.get('star_change') in ('reward','cost'):label='스타 보상' if detail['star_change']=='reward' else '스타 상승 비용'
+  if code==7 and detail.get('buff'):
+   buff=detail['buff'];name=buff_names.get(buff['definition_id'],'');source=buff['source_type'];identity=buff['source_id'];origin=''
+   if source==1:origin='스킬 · '+skill_names.get(identity,'스킬명 미확인')
+   elif source==2:origin='카드 · '+card_name(identity)
+   elif source==6:origin='칩 · '+chip_names.get(identity,'이름 미확인 #'+str(identity))
+   label='버프 효과'+(' · '+name if name else '')+(' · '+origin if origin else '')
   if code==14 and detail.get('purchase_card_ids'):
    from collections import Counter
    purchased=Counter(detail['purchase_card_ids']);label+=' · '+', '.join(card_name(id)+((' ×'+str(count)) if count>1 else '') for id,count in purchased.items())
