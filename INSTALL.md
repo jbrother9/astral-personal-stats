@@ -1,4 +1,4 @@
-# Astral Personal Stats 0.8.14 beta 1 (Windows x64)
+# Astral Personal Stats 0.8.15 beta 1 (Windows x64)
 
 경기 상세의 기본 통계 행을 누르면 선택한 참가자의 세부 기록을 볼 수 있습니다. 사망 상대와 턴, 이동 및 HP/골드 변화 등을 8개씩 표시합니다. 옛 기록은 리플레이가 남아 있으면 자동 보완하며 확인되지 않은 원인은 미확인으로 표시합니다.
 

@@ -124,6 +124,7 @@ namespace AstralPersonalMod {
   }catch(Exception e){RuntimeDiagnostics.Error("profile.update",e);if(now>=nextError){Plugin.Instance.Log.LogWarning("Profile statistics UI retry: "+e.GetType().Name+" / "+e.Message);Diagnostic("ui_retry");nextError=now+15;}}}
   void Diagnostic(string state){try{File.WriteAllText(Path.Combine(Plugin.Instance.DataDir,"plugin-ui-state.json"),"{\"owner_id\":"+owner+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+state+"\",\"profile_found\":"+(profileFound?"true":"false")+",\"profile_player_id\":"+profilePlayerId+",\"window_showing\":"+(window!=null&&NativeUI.Bool(window,"isShowing")?"true":"false")+",\"window_on_stage\":"+(window!=null&&NativeUI.Bool(window,"onStage")?"true":"false")+",\"window_order\":"+NativeUI.Long(window,"sortingOrder")+",\"profile_order\":"+NativeUI.Long(profile,"sortingOrder")+",\"shield_on_stage\":"+(shield!=null&&NativeUI.Bool(shield,"onStage")?"true":"false")+",\"profile_touchable\":"+(NativeUI.Bool(profile,"touchable")?"true":"false")+"}");}catch{}}
   IObject uiManager;bool profileObserved;
+  bool IsHomeScreen(){var panel=NativeUI.Get(uiManager,"currentPanel");return panel!=null&&NativeUI.TypeName(panel)=="UI.HomePanel";}
   void UpdateEntry(){
    if(uiManager==null&&NativeUI.Type("UI.UIManager")!=null)uiManager=NativeUI.Static("UI.UIManager","inst");
    if(uiManager!=null){cachedLobby=NativeUI.Get(NativeUI.Get(uiManager,"bottomMenuPanel"),"ui");cachedProfile=NativeUI.Get(uiManager,"_cachedAccountInfoWindow");}
@@ -131,7 +132,7 @@ namespace AstralPersonalMod {
    if(!AnyProfileVisible)profileObserved=false;
    else if(!profileObserved&&owner>0){var career=NativeUI.Get(cachedProfile,"playerCareer");if(NativeUI.Long(career,"playerId")==owner){Plugin.ObserveOwnHistory(career);profileObserved=true;}}
    var home=cachedLobby;if(home==null||NativeUI.Bool(home,"isDisposed")){if(home!=null)cachedLobby=null;if(entry!=null)DisposeEntry();CloseStats();return;}
-   if(!SearchVisible(home)||owner<=0){if(entry!=null&&!NativeUI.Bool(entry,"isDisposed")&&NativeUI.Bool(entry,"visible"))NativeUI.Set(entry,"visible",false);CloseStats();return;}
+   if(!IsHomeScreen()||!SearchVisible(home)||owner<=0){if(entry!=null&&!NativeUI.Bool(entry,"isDisposed")&&NativeUI.Bool(entry,"visible"))NativeUI.Set(entry,"visible",false);CloseStats();return;}
    if(!NativeUI.Same(lobby,home)||entry==null||NativeUI.Bool(entry,"isDisposed")){
     DisposeEntry();lobby=home;profile=null;lobbyWidth=lobbyHeight=-1;
     var functions=NativeUI.Get(home,"list_Function");if(functions!=null&&NativeUI.Long(functions,"numChildren")>0){var nativeText=NativeUI.Call(NativeUI.Call(functions,"GetChildAt",0),"GetTextField");font=NativeUI.Get(NativeUI.Get(nativeText,"textFormat"),"font");}
@@ -250,7 +251,7 @@ namespace AstralPersonalMod {
    footer=Label(pane,"",34,697,770,28,14);previousButton=NewButton(pane,"이전","PreviousPage",824,691,110,40);nextButton=NewButton(pane,"다음","NextPage",946,691,110,40);
    NativeUI.Set(window,"contentPane",pane);NativeUI.Set(window,"modal",true);NativeUI.Set(window,"name","astral_personal_window");
   }
-  public void OpenStats(){try{metricIndex=-1;metricPage=0;if(owner<=0)return;RuntimeDiagnostics.View(true);placement.Invalidate();nextFit=0;if(window==null||NativeUI.Bool(window,"isDisposed"))Build();EnsureFrontOrder();windowHidden=false;NativeUI.Call(window,"Show");NativeUI.Call(window,"BringToFront");open=true;catalogGeneration=RuntimeGameCatalog.Generation;nextCollectionRead=0;BlockProfile();Fit();selected=-1;cardKey=null;diceView=chipView=cardView=false;revisionTicks=-1;revisionLength=-1;revisionValue=0;CheckRevision(true);Request();nextRead=0;Render();}catch(Exception e){RuntimeDiagnostics.Error("profile.open",e);Plugin.Instance.Log.LogWarning("Could not open statistics: "+e.GetType().Name+" / "+e.Message);Diagnostic("open_failed");CloseStats();if(window!=null){try{NativeUI.Call(window,"Dispose");}catch{}window=null;}}}
+  public void OpenStats(){try{metricIndex=-1;metricPage=0;if(owner<=0||!IsHomeScreen())return;RuntimeDiagnostics.View(true);placement.Invalidate();nextFit=0;if(window==null||NativeUI.Bool(window,"isDisposed"))Build();EnsureFrontOrder();windowHidden=false;NativeUI.Call(window,"Show");NativeUI.Call(window,"BringToFront");open=true;catalogGeneration=RuntimeGameCatalog.Generation;nextCollectionRead=0;BlockProfile();Fit();selected=-1;cardKey=null;diceView=chipView=cardView=false;revisionTicks=-1;revisionLength=-1;revisionValue=0;CheckRevision(true);Request();nextRead=0;Render();}catch(Exception e){RuntimeDiagnostics.Error("profile.open",e);Plugin.Instance.Log.LogWarning("Could not open statistics: "+e.GetType().Name+" / "+e.Message);Diagnostic("open_failed");CloseStats();if(window!=null){try{NativeUI.Call(window,"Dispose");}catch{}window=null;}}}
   public void CloseStats(){
    awaitingSnapshot=false;refreshDue=0;if(open)WriteClosedRequest();RuntimeDiagnostics.View(false);if(!open&&windowHidden&&shield==null&&blockedProfile==null&&dropdown==null)return;
    diceView=false;chipView=false;selectedPlayer=0;portraits.Clear();cardView=false;cardKey=null;
