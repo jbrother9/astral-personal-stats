@@ -42,6 +42,12 @@ def metric_detail(db,owner,rid,pid,index,page=0):
   hid=entity['hero_id'];name=(monsters if entity['kind']=='npc' else heroes).get(hid,'이름 미확인 #'+str(hid))
   person=people.get(identity)
   return (person.get('name','')+' · ' if person and person.get('name') else '')+name
+ def target_label(target):
+  identity=target.get('id');entity=target.get('entity')
+  if identity==pid:return '자신'
+  if not entity:return '대상 미확인'
+  hid=entity['hero_id'];name=(monsters if entity['kind']=='npc' else heroes).get(hid,'이름 미확인 #'+str(hid));person=people.get(identity)
+  return (person.get('name','')+' · ' if person and person.get('name') else '')+name
  for event in (participant or {}).get('timeline',[]):
   if event['kind']!=kinds.get(key):continue
   d=event['detail'];text=event['kind']
@@ -62,6 +68,10 @@ def metric_detail(db,owner,rid,pid,index,page=0):
   elif key=='npc_last_hits':
    hid=d.get('target_hero_id',0);text=monsters.get(hid,'이름 미확인 #'+str(hid))+' 마지막 공격'
   elif key in ('effect_cards','battle_cards'):text=card_name(d['definition_id']) if d.get('definition_id') else '카드명 연결 미확인'
+  if key in ('effect_cards','skills') and event.get('targets'):text+=' → '+', '.join(target_label(target) for target in event['targets'])
+  if key=='battle_cards':
+   if event.get('opponent',{}).get('id'):text+=' · 전투 상대: '+target_label(event['opponent'])
+   if 'card_bonus' in d:text+=' · 카드 보너스 '+('+' if d['card_bonus']>=0 else '')+str(d['card_bonus'])
   rows.append([str(event['round'])+'턴' if event.get('round') else '턴 미확인',text])
  total=len(rows);pages=max(1,(total+7)//8);page=max(0,min(page,pages-1))
  note='리플레이에서 관찰한 기록입니다. 결과창 합계와 집계 기준이 다를 수 있습니다.'

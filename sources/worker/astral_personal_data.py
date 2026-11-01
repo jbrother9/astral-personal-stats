@@ -1,6 +1,7 @@
 """Personal-only replay analysis and SQLite index. Does not store other players' profiles."""
 import json,pathlib,struct,time
 import astral_replay as replay
+from astral_protobuf import varint
 import astral_card_stats as cards
 import astral_chip_stats as chips
 import astral_combat_dice as dice
@@ -39,7 +40,16 @@ def analyze(data,summary,owner):
  person=next((p for p in summary['participants'] if p['player_id']==owner),None)
  if person is None:raise ValueError('Own player not in replay')
  events=[];stats=dict(turns=0,deaths=0,npc_last_hits=0,effect_cards=0,battle_cards=0,skills=0)
- pos=frame=roundno=0;actor=0;level=None;known_cards={}
+ pos=frame=roundno=0;actor=0;level=None;known_cards={};battle_id=0;opponent=0;battle_bonuses={}
+ def target_ids(values):
+  result=[]
+  for value in values:
+   if isinstance(value,int):result.append(value)
+   elif isinstance(value,bytes):
+    offset=0
+    while offset<len(value):
+     number,offset=varint(value,offset);result.append(number)
+  return list(dict.fromkeys(v for v in result if v>0))
  def remember_cards(raw_cards):
   for raw in raw_cards:
    card=replay.protobuf(raw);uid,definition=replay.first(card,1),replay.first(card,2)
@@ -48,9 +58,21 @@ def analyze(data,summary,owner):
   events.append((summary['replay_id'],owner,frame,len(events),roundno,int(actor==owner),kind,json.dumps(detail,ensure_ascii=False)))
  while pos<len(data):
   op,n=struct.unpack_from('>HI',data,pos);pos+=6;body=data[pos:pos+n];pos+=n;frame+=1
-  if op not in (1003,1113,1015,5056,5036,1115,1040,5022,5028,5212,1109):continue
+  if op not in (1003,1113,1015,5056,5036,1115,1040,5022,5028,5212,1109,1007):continue
   f=replay.protobuf(body);pid=replay.first(f,1)
-  if op==1015:
+  if op==1007:
+   battle=replay.protobuf(replay.first(f,1,b''));battle_id=replay.first(battle,1);opponent=0
+   attacker=replay.protobuf(replay.first(battle,2,b''));defender=replay.protobuf(replay.first(battle,3,b''))
+   ap,dp=replay.first(attacker,1),replay.first(defender,1)
+   role=attacker if ap==owner else defender if dp==owner else None
+   if role is not None and ap!=dp:
+    opponent=dp if ap==owner else ap
+    bonuses=[]
+    for raw_bonus in role.get(23,[]):
+     bonus=replay.protobuf(raw_bonus);bonuses.append((replay.first(bonus,1),signed32(replay.first(bonus,2))))
+    if battle_id and bonuses:battle_bonuses[battle_id]=bonuses
+   if replay.first(battle,5):opponent=0
+  elif op==1015:
    roundno=replay.first(f,1);actor=replay.first(f,5)
    if actor==owner:stats['turns']+=1;add('턴 시작',{'round':roundno})
   elif op in (1003,1113):
@@ -64,10 +86,10 @@ def analyze(data,summary,owner):
      add('성장 상태',{'previous':level,'current':current,'snapshot_round':replay.first(room,14),'note':'게임 내부 성장 값; 스냅샷에서 확인한 시점'});level=current
   elif op==1109 and replay.first(f,2)==owner:remember_cards(f.get(1,[]))
   elif op==5056 and pid==owner:
-   if replay.first(f,8):stats['skills']+=1;add('스킬',{'skill_id':replay.first(f,9)})
-   if replay.first(f,2) and not replay.first(f,8):stats['effect_cards']+=1;add('효과 카드',{'card_id':replay.first(f,2),'definition_id':replay.first(f,2)})
+   if replay.first(f,8):stats['skills']+=1;add('스킬',{'skill_id':replay.first(f,9),'targets':target_ids(f.get(3,[]))})
+   if replay.first(f,2) and not replay.first(f,8):stats['effect_cards']+=1;add('효과 카드',{'card_id':replay.first(f,2),'definition_id':replay.first(f,2),'targets':target_ids(f.get(3,[]))})
   elif op==5036 and pid==owner and replay.first(f,2) and not replay.first(f,3):
-   stats['battle_cards']+=1;add('전투 카드',{'card_id':replay.first(f,2),'definition_id':known_cards.get(replay.first(f,2))})
+   stats['battle_cards']+=1;add('전투 카드',{'card_id':replay.first(f,2),'definition_id':known_cards.get(replay.first(f,2)),'battle_id':battle_id,'opponent_id':opponent})
   elif op==1115:
    if pid==owner:stats['deaths']+=1;add('사망',{'killer_id':replay.first(f,3)})
    elif replay.first(f,3)==owner and pid not in [p['player_id'] for p in summary['participants']]:stats['npc_last_hits']+=1;add('NPC 마지막 공격',{'target_hero_id':replay.first(f,2)})
@@ -90,6 +112,15 @@ def analyze(data,summary,owner):
     for field,kind in ((2,'골드 변화'),(3,'HP 변화')):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
      v=replay.protobuf(effect[field][0]);add(kind,{'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
+ # A repeated definition in one battle is ambiguous; do not assign a bonus by guessing order.
+ battle_events={}
+ for i,event in enumerate(events):
+  if event[6]!='전투 카드':continue
+  detail=json.loads(event[7]);key=(detail.get('battle_id'),detail.get('definition_id'));battle_events.setdefault(key,[]).append(i)
+ for (battle,definition),indices in battle_events.items():
+  values=[v for card,v in battle_bonuses.get(battle,[]) if card==definition]
+  if not battle or not definition or len(indices)!=1 or len(values)!=1:continue
+  i=indices[0];event=list(events[i]);detail=json.loads(event[7]);detail['card_bonus']=values[0];event[7]=json.dumps(detail,ensure_ascii=False);events[i]=tuple(event)
  settlement=summary.get('settlement',{}).get(str(owner))
  if settlement is not None:
   stats['deaths']=settlement['deaths'];add('최종 결과',settlement)
@@ -250,7 +281,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=9
+INSIGHTS_VERSION=10
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
@@ -290,7 +321,7 @@ def save_insights(db,data,summary,owner):
    if event[6] in ('성장 상태','최종 결과'):continue
    detail=json.loads(event[7]);source=detail.get('killer_id',detail.get('source',detail.get('target',0)))
    entity=entities.get(source) if source not in ambiguous else None
-   timeline.append({'round':event[4] or None,'kind':event[6],'detail':detail,'entity':entity,'entity_id':source})
+   timeline.append({'round':event[4] or None,'kind':event[6],'detail':detail,'entity':entity,'entity_id':source,'targets':[{'id':target,'entity':entities.get(target) if target not in ambiguous else None} for target in detail.get('targets',[])],'opponent':{'id':detail.get('opponent_id',0),'entity':entities.get(detail.get('opponent_id')) if detail.get('opponent_id') not in ambiguous else None}})
   participants.append({'player_id':p['player_id'],'timeline':timeline,'totals':summarize_events(record,events),'cards':cards.analyze(data,p['player_id']),'chips':chips.analyze(data,p['player_id']),'dice':dice.analyze(data,p['player_id'])})
  value={'participants':participants,'killers':[{'kind':kind,'hero_id':hero,'count':count} for (kind,hero),count in sorted(counter.items())],'unknown_deaths':unknown,'deaths':len(deaths)}
  db.execute('INSERT OR REPLACE INTO personal_match_insights VALUES (?,?,?,?)',(summary['replay_id'],owner,INSIGHTS_VERSION,json.dumps(value,ensure_ascii=False)))
