@@ -34,6 +34,7 @@ def metric_detail(db,owner,rid,pid,index,page=0):
  def reason(detail):
   code=detail.get('cause_type');label=reasons.get(code,'원인 미확인')
   if label=='원인 미확인':label={1:'스킬',2:'카드',3:'운명',4:'점술',5:'이벤트',6:'칸 효과',7:'전투',8:'버프',9:'소환물',10:'칩 효과',11:'맵 이벤트'}.get(detail.get('damage_type'),'원인 미확인')
+  if label=='원인 미확인' and detail.get('star_change') in ('reward','cost'):label='스타 보상' if detail['star_change']=='reward' else '스타 상승 비용'
   if code==2 and detail.get('cause_id'):label+=' · '+card_name(detail['cause_id'])
   return label
  def entity_label(event):
