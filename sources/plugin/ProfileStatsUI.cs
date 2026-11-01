@@ -59,10 +59,11 @@ namespace AstralPersonalMod {
  public sealed class DiceRole {public int count{get;set;}public string average{get;set;}public int[] faces{get;set;}}
  public sealed class DicePanel {public int analyzed{get;set;}public int total{get;set;}public int unknown{get;set;}public DiceRole attack{get;set;}public DiceRole defense{get;set;}public DiceRole dodge{get;set;}}
  public sealed class CardPanel {public string[][] basic_rows{get;set;}public CardTopItem[] battle_used{get;set;}public CardTopItem[] effect_used{get;set;}public DicePanel dice{get;set;}public ChipPanel chips{get;set;}public string key{get;set;}public string title{get;set;}public int analyzed{get;set;}public int total{get;set;}public int unresolved_use{get;set;}public int unresolved_purchase{get;set;}public int assisted_purchase{get;set;}public CardTopItem[] used{get;set;}public CardTopItem[] acquired{get;set;}public CardTopItem[] bought{get;set;}}
- public sealed class GameDetail {public MatchAppearance[] participants{get;set;}public CardPanel cards{get;set;}public string title{get;set;}public string[][] rows{get;set;}}
+ public sealed class MetricDetail {public string replay_id{get;set;}public long player_id{get;set;}public int metric{get;set;}public string title{get;set;}public string note{get;set;}public int page{get;set;}public int pages{get;set;}public int total{get;set;}public string[][] rows{get;set;}}
+ public sealed class GameDetail {public string replay_id{get;set;}public MatchAppearance[] participants{get;set;}public CardPanel cards{get;set;}public string title{get;set;}public string[][] rows{get;set;}}
  public sealed class CollectionState {public int schema{get;set;}public long owner_id{get;set;}public long heartbeat{get;set;}public string kind{get;set;}public string label{get;set;}}
  public sealed class DataRevision {public int schema{get;set;}public long owner_id{get;set;}public long revision{get;set;}}
- public sealed class StatsSnapshot {public long request_id{get;set;}public int difficulty{get;set;}=-1;public bool difficulty_enabled{get;set;}=true;public Choice[] difficulties{get;set;}
+ public sealed class StatsSnapshot {public MetricDetail metric_detail{get;set;}public long request_id{get;set;}public int difficulty{get;set;}=-1;public bool difficulty_enabled{get;set;}=true;public Choice[] difficulties{get;set;}
   public KillerPanel killers{get;set;}public CardPanel card_overview{get;set;}public CardPanel[] row_cards{get;set;}public int schema{get;set;}public long owner_id{get;set;}public long generated_at{get;set;}
   public int hero{get;set;}=-1;public Choice[] heroes{get;set;}public int page_size{get;set;}public int mode{get;set;}public int map{get;set;}public int tab{get;set;}public int page{get;set;}public int pages{get;set;}public int total_rows{get;set;}
   public Choice[] modes{get;set;}public Choice[] maps{get;set;}public string[] summary{get;set;}public string pve_summary{get;set;}public string pvp_summary{get;set;}public string[] columns{get;set;}public string[][] rows{get;set;}public GameDetail[] details{get;set;}public string note{get;set;}
@@ -97,7 +98,7 @@ namespace AstralPersonalMod {
   Choice[] modeChoices,mapChoices,heroChoices,difficultyChoices;
 
 
-  StatsSnapshot snapshot;bool open;float nextRead,nextError,nextDiagnostic;long owner;int tab=3,mode=-1,map=-1,hero=-1,difficulty=-1,page;int selected=-1;
+  int metricIndex=-1,metricPage;StatsSnapshot snapshot;bool open;float nextRead,nextError,nextDiagnostic;long owner;int tab=3,mode=-1,map=-1,hero=-1,difficulty=-1,page;int selected=-1;
   bool profileFound;long profilePlayerId;
   IObject lobby,cachedLobby;float lobbyWidth=-1,lobbyHeight=-1;
   IObject cachedProfile;bool entryLayoutApplied,entryStampValid,windowHidden=true;
@@ -249,7 +250,7 @@ namespace AstralPersonalMod {
    footer=Label(pane,"",34,697,770,28,14);previousButton=NewButton(pane,"이전","PreviousPage",824,691,110,40);nextButton=NewButton(pane,"다음","NextPage",946,691,110,40);
    NativeUI.Set(window,"contentPane",pane);NativeUI.Set(window,"modal",true);NativeUI.Set(window,"name","astral_personal_window");
   }
-  public void OpenStats(){try{if(owner<=0)return;RuntimeDiagnostics.View(true);placement.Invalidate();nextFit=0;if(window==null||NativeUI.Bool(window,"isDisposed"))Build();EnsureFrontOrder();windowHidden=false;NativeUI.Call(window,"Show");NativeUI.Call(window,"BringToFront");open=true;catalogGeneration=RuntimeGameCatalog.Generation;nextCollectionRead=0;BlockProfile();Fit();selected=-1;cardKey=null;diceView=chipView=cardView=false;revisionTicks=-1;revisionLength=-1;revisionValue=0;CheckRevision(true);Request();nextRead=0;Render();}catch(Exception e){RuntimeDiagnostics.Error("profile.open",e);Plugin.Instance.Log.LogWarning("Could not open statistics: "+e.GetType().Name+" / "+e.Message);Diagnostic("open_failed");CloseStats();if(window!=null){try{NativeUI.Call(window,"Dispose");}catch{}window=null;}}}
+  public void OpenStats(){try{metricIndex=-1;metricPage=0;if(owner<=0)return;RuntimeDiagnostics.View(true);placement.Invalidate();nextFit=0;if(window==null||NativeUI.Bool(window,"isDisposed"))Build();EnsureFrontOrder();windowHidden=false;NativeUI.Call(window,"Show");NativeUI.Call(window,"BringToFront");open=true;catalogGeneration=RuntimeGameCatalog.Generation;nextCollectionRead=0;BlockProfile();Fit();selected=-1;cardKey=null;diceView=chipView=cardView=false;revisionTicks=-1;revisionLength=-1;revisionValue=0;CheckRevision(true);Request();nextRead=0;Render();}catch(Exception e){RuntimeDiagnostics.Error("profile.open",e);Plugin.Instance.Log.LogWarning("Could not open statistics: "+e.GetType().Name+" / "+e.Message);Diagnostic("open_failed");CloseStats();if(window!=null){try{NativeUI.Call(window,"Dispose");}catch{}window=null;}}}
   public void CloseStats(){
    awaitingSnapshot=false;refreshDue=0;if(open)WriteClosedRequest();RuntimeDiagnostics.View(false);if(!open&&windowHidden&&shield==null&&blockedProfile==null&&dropdown==null)return;
    diceView=false;chipView=false;selectedPlayer=0;portraits.Clear();cardView=false;cardKey=null;
@@ -279,14 +280,15 @@ namespace AstralPersonalMod {
   }catch(IOException){}catch(JsonException){}}
   void WriteClosedRequest(){try{WriteUiRequest(false);}catch(IOException){}}
   void WriteUiRequest(bool visible){
-   string json=JsonSerializer.Serialize(new {owner_id=owner,updated_at=DateTimeOffset.UtcNow.ToUnixTimeSeconds(),request_id=requestId,visible,tab,mode,map,hero,difficulty,page});
+   string detailReplay=selected>=0&&snapshot?.details!=null&&selected<snapshot.details.Length?snapshot.details[selected].replay_id:"";long detailPlayer=selectedPlayer>0?selectedPlayer:owner;
+   string json=JsonSerializer.Serialize(new {detail_replay=detailReplay,detail_player=detailPlayer,detail_metric=metricIndex,detail_page=metricPage,owner_id=owner,updated_at=DateTimeOffset.UtcNow.ToUnixTimeSeconds(),request_id=requestId,visible,tab,mode,map,hero,difficulty,page});
    var target=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-request.json");File.WriteAllText(target+".part",json);File.Move(target+".part",target,true);
   }
   void Request(){requestId=Math.Max(requestId+1,DateTime.UtcNow.Ticks);WriteUiRequest(true);awaitingSnapshot=true;responseDeadline=Time.realtimeSinceStartup+30;nextRead=0;refreshDue=0;}
-  void ReadSnapshot(){string path=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-snapshot.json");if(!File.Exists(path))return;var info=new FileInfo(path);if(info.Length>4194304)return;if(snapshot!=null&&snapshotFileTicks==info.LastWriteTimeUtc.Ticks&&snapshotFileLength==info.Length)return;var next=JsonSerializer.Deserialize<StatsSnapshot>(File.ReadAllText(path));if(next==null||next.schema!=1||next.request_id!=requestId||next.owner_id!=owner||next.tab!=tab||next.mode!=mode||next.map!=map||next.hero!=hero||next.difficulty!=difficulty||next.page!=page||DateTimeOffset.UtcNow.ToUnixTimeSeconds()-next.generated_at>60)return;awaitingSnapshot=false;if(snapshot!=null&&snapshot.request_id==next.request_id){snapshotFileTicks=info.LastWriteTimeUtc.Ticks;snapshotFileLength=info.Length;return;}string nextPresentation=PresentationKey(next);string previousPresentation=snapshot!=null?(snapshotSelection==selected&&snapshotPresentation!=null?snapshotPresentation:PresentationKey(snapshot)):null;bool unchanged=snapshot!=null&&previousPresentation==nextPresentation;snapshot=next;snapshotPresentation=nextPresentation;snapshotSelection=selected;snapshotFileTicks=info.LastWriteTimeUtc.Ticks;snapshotFileLength=info.Length;modeChoices=next.modes;mapChoices=next.maps;heroChoices=next.heroes;difficultyChoices=next.difficulties;if(!unchanged)Render();}
+  void ReadSnapshot(){string path=Path.Combine(Plugin.Instance.DataDir,"plugin-ui-snapshot.json");if(!File.Exists(path))return;var info=new FileInfo(path);if(info.Length>4194304)return;if(snapshot!=null&&snapshotFileTicks==info.LastWriteTimeUtc.Ticks&&snapshotFileLength==info.Length)return;var next=JsonSerializer.Deserialize<StatsSnapshot>(File.ReadAllText(path));if(next==null||next.schema!=1||next.request_id!=requestId||next.owner_id!=owner||next.tab!=tab||next.mode!=mode||next.map!=map||next.hero!=hero||next.difficulty!=difficulty||next.page!=page||DateTimeOffset.UtcNow.ToUnixTimeSeconds()-next.generated_at>60)return;awaitingSnapshot=false;if(metricIndex>=0&&next.metric_detail!=null)metricPage=next.metric_detail.page;if(snapshot!=null&&snapshot.request_id==next.request_id){snapshotFileTicks=info.LastWriteTimeUtc.Ticks;snapshotFileLength=info.Length;return;}string nextPresentation=PresentationKey(next);string previousPresentation=snapshot!=null?(snapshotSelection==selected&&snapshotPresentation!=null?snapshotPresentation:PresentationKey(snapshot)):null;bool unchanged=snapshot!=null&&previousPresentation==nextPresentation;snapshot=next;snapshotPresentation=nextPresentation;snapshotSelection=selected;snapshotFileTicks=info.LastWriteTimeUtc.Ticks;snapshotFileLength=info.Length;modeChoices=next.modes;mapChoices=next.maps;heroChoices=next.heroes;difficultyChoices=next.difficulties;if(!unchanged)Render();}
   string PresentationKey(StatsSnapshot value){
    // Ignore heartbeat timestamps. Keep the existing loaders alive while visible content is unchanged.
-   if(selected>=0&&value.details!=null&&selected<value.details.Length)return JsonSerializer.Serialize(new {value.mode,value.map,value.hero,value.difficulty,detail=value.details[selected],value.summary,value.pve_summary,value.pvp_summary});
+   if(selected>=0&&value.details!=null&&selected<value.details.Length)return JsonSerializer.Serialize(new {value.mode,value.map,value.hero,value.difficulty,detail=value.details[selected],value.metric_detail,value.summary,value.pve_summary,value.pvp_summary});
    long generated=value.generated_at;try{value.generated_at=0;return JsonSerializer.Serialize(value);}finally{value.generated_at=generated;}
   }
   void ClearBody(){portraits.Clear();NativeUI.Call(body,"RemoveChildren",0,-1,true);PruneClicks();}
@@ -318,17 +320,30 @@ namespace AstralPersonalMod {
      var tile=Component(body,x,y,164,164);NativeUI.Set(tile,"opaque",true);bool active=current!=null&&current.player_id==p.player_id;
      Round(tile,0,0,164,164,active?accent:lavender,9);Round(tile,3,3,158,158,active?lavender:Color.white,8);portraits.Add(tile,p,10,4,144,112);
      Label(tile,(p.own?"본인 · ":"")+p.hero_name,8,117,150,22,14);Label(tile,p.name,8,139,150,20,12);
-     long player=p.player_id;Bind(tile,()=>{selectedPlayer=player;chipPage=cardPage=0;Render();});
+     long player=p.player_id;Bind(tile,()=>{selectedPlayer=player;metricIndex=-1;metricPage=0;chipPage=cardPage=0;Render();});
     }
    }else Label(body,"외형 정보 없음 · 캐시 자동 보완 대기",10,70,330,100,16);
    if(current!=null&&!current.available){Label(body,"이 참가자의 경기 분석을 준비하고 있습니다.",360,100,680,40,18);return;}
    if(diceView){DrawDice(current?.cards?.dice??(current==null?d.cards?.dice:null),true);return;}
    if(cardView){DrawParticipantCards(current?.cards??(current==null?d.cards:null));return;}
    if(chipView){DrawParticipantChips(current?.cards?.chips??(current==null?d.cards?.chips:null));return;}
+   if(metricIndex>=0){DrawMetricDetail(d,current);return;}
    var rows=current?.rows??d.rows;
    Label(body,"지표",360,33,305,24,16);Label(body,"경기 합계",690,33,125,24,16);Label(body,"선택 유저 턴당 평균",835,33,210,24,16);
-   for(int i=0;rows!=null&&i<rows.Length&&i<17;i++){float y=59+i*19;Round(body,352,y,702,19,i%2==0?Color.white:rose,5);Label(body,rows[i][0],360,y+1,320,19,14);Label(body,rows[i][1],690,y+1,125,19,14);Label(body,rows[i][2],835,y+1,210,19,14);}
+   for(int i=0;rows!=null&&i<rows.Length&&i<17;i++){float y=59+i*19;var row=Component(body,352,y,702,19);NativeUI.Set(row,"opaque",true);Round(row,0,0,702,19,i%2==0?Color.white:rose,5);Label(row,rows[i][0],8,1,320,19,14);Label(row,rows[i][1],338,1,125,19,14);Label(row,rows[i][2],483,1,165,19,14);Label(row,"›",674,0,24,19,16);int metric=i;Bind(row,()=>{metricIndex=metric;metricPage=0;Request();Render();});}
    NativeUI.Set(footer,"text","");
+  }
+  void DrawMetricDetail(GameDetail game,MatchAppearance participant){
+   ActionButton(body,"합계로",()=>{metricIndex=-1;metricPage=0;Render();},352,37,92,32);
+   var detail=snapshot.metric_detail;long player=participant?.player_id??owner;
+   if(detail==null||detail.replay_id!=game.replay_id||detail.player_id!=player||detail.metric!=metricIndex||detail.page!=metricPage){Label(body,"상세 기록을 불러오는 중입니다…",465,42,570,28,17);return;}
+   Label(body,detail.title+" · "+detail.total+"건",458,40,395,28,18);
+   ActionButton(body,"이전",()=>{if(metricPage>0){metricPage--;Request();Render();}},862,37,88,32);
+   ActionButton(body,"다음",()=>{if(metricPage+1<detail.pages){metricPage++;Request();Render();}},960,37,88,32);
+   for(int i=0;detail.rows!=null&&i<detail.rows.Length;i++){
+    float y=82+i*31;Round(body,352,y,702,29,i%2==0?Color.white:rose,5);Label(body,detail.rows[i][0],362,y+3,95,24,14);Label(body,detail.rows[i][1],465,y+3,580,24,14);
+   }
+   var note=Label(body,detail.note??"",360,337,690,42,13);NativeUI.Set(note,"singleLine",false);NativeUI.Set(footer,"text",(detail.page+1)+" / "+detail.pages+" 페이지");
   }
   void DrawGroupBasic(CardPanel data){
    if(data==null){Label(body,"통계를 불러오는 중입니다…",16,30,1000,35,20);return;}
@@ -361,7 +376,7 @@ namespace AstralPersonalMod {
    NativeUI.Set(footer,"text",(chipPage+1)+" / "+pages+" 페이지 · 선택한 참가자의 해당 경기 칩");
   }
   int ContentIndex=>diceView?3:chipView?2:cardView?1:0;
-  void SetContent(int index){CloseDropdown();if(tab==3&&selected<0&&index!=0)return;cardView=index==1;chipView=index==2;diceView=index==3;chipPage=cardPage=0;Render();}
+  void SetContent(int index){metricIndex=-1;metricPage=0;CloseDropdown();if(tab==3&&selected<0&&index!=0)return;cardView=index==1;chipView=index==2;diceView=index==3;chipPage=cardPage=0;Render();}
   public void ShowDice(){SetContent(3);}
   public void ShowBasic(){SetContent(0);}
   void LayoutContentTabs(){
@@ -456,13 +471,13 @@ namespace AstralPersonalMod {
   void SelectDropdown(int index){var option=dropdownModel?.At(index);if(option==null)return;if(dropdownKind==1){mode=option.id;if(option.is_pvp)difficulty=-1;}else if(dropdownKind==2)map=option.id;else if(dropdownKind==3)hero=option.id;else if(dropdownKind==4)difficulty=option.id;page=0;Change(true);}
   void ScrollDropdown(int delta){if(dropdownModel!=null&&dropdownModel.Scroll(delta))DrawDropdown();}
   void PollDropdownScroll(){if(!open||dropdown==null)return;float wheel=Input.mouseScrollDelta.y;if(Math.Abs(wheel)<.001f)return;var root=NativeUI.Static("FairyGUI.GRoot","inst");if(Within(NativeUI.Get(root,"touchTarget"),dropdown))ScrollDropdown(wheel>0?-1:1);}
-  void Change(bool preserveView=false){if(!preserveView||tab==3){diceView=false;chipView=false;cardView=false;}chipPage=cardPage=0;selectedPlayer=0;CloseDropdown();selected=-1;cardKey=null;snapshot=null;Request();Render();nextRead=0;}
+  void Change(bool preserveView=false){metricIndex=-1;metricPage=0;if(!preserveView||tab==3){diceView=false;chipView=false;cardView=false;}chipPage=cardPage=0;selectedPlayer=0;CloseDropdown();selected=-1;cardKey=null;snapshot=null;Request();Render();nextRead=0;}
   void SetTab(int v){cardView=false;tab=v;page=0;Change();}
   public void TabAll(){SetTab(0);}public void TabMaps(){SetTab(1);}public void TabHeroes(){SetTab(2);}public void TabHistory(){SetTab(3);}
   public void NextDifficulty(){ToggleDropdown(4);}public void NextMode(){ToggleDropdown(1);}public void NextMap(){ToggleDropdown(2);}public void NextHero(){ToggleDropdown(3);}
   public void PreviousPage(){if(cardView){PreviousCards();return;}if(chipView){PreviousChips();return;}if(page>0){page--;Change();}}public void NextPage(){if(cardView){NextCards();return;}if(chipView){NextChips();return;}if(snapshot!=null&&page+1<snapshot.pages){page++;Change();}}
-  public void RefreshStats(){RuntimeGameCatalog.Invalidate();CloseDropdown();Request();nextRead=0;}public void BackToList(){cardPage=0;diceView=false;chipView=false;selectedPlayer=0;cardView=false;cardKey=null;selected=-1;Render();}
-  void Select(int r){cardPage=0;diceView=false;chipView=false;if(snapshot==null)return;if(tab==3){if(snapshot.details==null||r>=snapshot.details.Length)return;selected=r;selectedPlayer=0;cardView=false;}else{if(snapshot.row_cards==null||r>=snapshot.row_cards.Length)return;cardKey=snapshot.row_cards[r].key;selected=-1;cardView=false;}Render();}
+  public void RefreshStats(){RuntimeGameCatalog.Invalidate();CloseDropdown();Request();nextRead=0;}public void BackToList(){metricIndex=-1;metricPage=0;cardPage=0;diceView=false;chipView=false;selectedPlayer=0;cardView=false;cardKey=null;selected=-1;Render();}
+  void Select(int r){metricIndex=-1;metricPage=0;cardPage=0;diceView=false;chipView=false;if(snapshot==null)return;if(tab==3){if(snapshot.details==null||r>=snapshot.details.Length)return;selected=r;selectedPlayer=0;cardView=false;}else{if(snapshot.row_cards==null||r>=snapshot.row_cards.Length)return;cardKey=snapshot.row_cards[r].key;selected=-1;cardView=false;}Render();}
   public void Row0(){Select(0);}public void Row1(){Select(1);}public void Row2(){Select(2);}public void Row3(){Select(3);}public void Row4(){Select(4);}public void Row5(){Select(5);}public void Row6(){Select(6);}public void Row7(){Select(7);}
  }
 }

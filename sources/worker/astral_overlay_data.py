@@ -19,6 +19,51 @@ def metric_rows(totals):
  return lines
 
 
+METRIC_KEYS=('turns','deaths','npc_last_hits','effect_cards','battle_cards','skills','chip_selection_events','dice_events','movement_distance','damage_dealt','damage_taken','transferred_gold','max_battle_damage','gold_increase','gold_decrease','hp_increase','hp_decrease')
+
+def metric_detail(db,owner,rid,pid,index,page=0):
+ if type(index) is not int or not 0<=index<len(METRIC_KEYS) or type(pid) is not int or type(page) is not int or not isinstance(rid,str):return None
+ if not db.execute('SELECT 1 FROM personal_matches WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone():return None
+ insight=personal.match_insights(db,rid,owner)
+ participant=next((p for p in (insight or {}).get('participants',[]) if p['player_id']==pid),None)
+ title=metric_rows({})[index][0];key=METRIC_KEYS[index];rows=[]
+ kinds={'turns':'턴 시작','deaths':'사망','npc_last_hits':'NPC 마지막 공격','effect_cards':'효과 카드','battle_cards':'전투 카드','skills':'스킬','chip_selection_events':'칩 선택 응답','dice_events':'주사위','movement_distance':'이동','damage_dealt':'가한 피해','damage_taken':'HP 변화','gold_increase':'골드 변화','gold_decrease':'골드 변화','hp_increase':'HP 변화','hp_decrease':'HP 변화'}
+ people={p['player_id']:p for p in personal.appearances(db,rid,owner)}
+ heroes=game_catalog.hero_names(db);monsters=game_catalog.names('monsters',db)
+ def entity_label(event):
+  entity=event.get('entity');identity=event.get('entity_id',0)
+  if not entity:return '원인 미확인' if not identity else '상대 미확인'
+  hid=entity['hero_id'];name=(monsters if entity['kind']=='npc' else heroes).get(hid,'이름 미확인 #'+str(hid))
+  person=people.get(identity)
+  return (person.get('name','')+' · ' if person and person.get('name') else '')+name
+ for event in (participant or {}).get('timeline',[]):
+  if event['kind']!=kinds.get(key):continue
+  d=event['detail'];text=event['kind']
+  if key=='deaths':text=entity_label(event)+'에게 사망' if event.get('entity') else entity_label(event)+' · 사망'
+  elif key in ('damage_taken','gold_increase','gold_decrease','hp_increase','hp_decrease'):
+   delta=d.get('after',0)-d.get('before',0);increase=key.endswith('increase')
+   if (increase and delta<=0) or (not increase and delta>=0):continue
+   text=str(d.get('before',0))+' → '+str(d.get('after',0))+' ('+('+' if delta>0 else '')+str(delta)+')'
+   if key=='damage_taken':text+=' · HP 감소 기록 · '+entity_label(event)
+  elif key=='damage_dealt':text=entity_label(event)+' · '+str(d.get('amount',0))+' 피해'
+  elif key=='movement_distance':text=str(d.get('distance',0))+'칸 이동'
+  elif key=='dice_events':text='이동 주사위 '+str(d.get('move_point',0))
+  elif key=='chip_selection_events':
+   chip=d.get('relic_id',0);text=game_catalog.names('chips',db).get(chip,'이름 미확인 #'+str(chip))+(' · 재추첨' if d.get('is_reroll') else '')
+  elif key=='skills':text='스킬 사용 · 스킬 ID '+str(d.get('skill_id',0))
+  elif key=='npc_last_hits':
+   hid=d.get('target_hero_id',0);text=monsters.get(hid,'이름 미확인 #'+str(hid))+' 마지막 공격'
+  elif key in ('effect_cards','battle_cards'):text='카드 사용 기록'
+  rows.append([str(event['round'])+'턴' if event.get('round') else '턴 미확인',text])
+ total=len(rows);pages=max(1,(total+7)//8);page=max(0,min(page,pages-1))
+ note='리플레이에서 관찰한 기록입니다. 결과창 합계와 집계 기준이 다를 수 있습니다.'
+ if participant is None or 'timeline' not in participant:note='세부 기록 분석이 필요합니다. 리플레이가 남아 있으면 백그라운드에서 보완합니다.'
+ elif key in ('transferred_gold','max_battle_damage'):note='결과창의 합계 값입니다. 대응하는 세부 이벤트는 아직 연결하지 않았습니다.'
+ elif key=='damage_taken':note='HP 감소 내역입니다. 결과창의 받은 피해량과 같은 기준이라고 볼 수 없습니다.'
+ elif not rows:note='관찰된 세부 기록이 없습니다. 최종 합계가 0이 아니라면 기록 누락 또는 집계 기준 차이일 수 있습니다.'
+ return {'replay_id':rid,'player_id':pid,'metric':index,'title':title,'page':page,'pages':pages,'total':total,'rows':rows[page*8:page*8+8],'note':note}
+
+
 def aggregate_metrics(r):
  rows=[]
  for key,label in [('damage_dealt','총 피해량 (가한 피해)'),('damage_taken','총 받은 피해량'),('deaths','사망'),('movement_distance','총 이동 거리 (칸)'),('transferred_gold','전달 골드'),('max_battle_damage','최대 전투 피해')]:
@@ -97,7 +142,7 @@ def make_snapshot(db,owner,mode=None,map_id=None,tab=0,page=0,hero_id=None,diffi
    if card is not None:card['dice']=personal.dice.panel([analysis['dice']] if analysis.get('dice') else [],1)
    participants.append({**person,'hero_name':heroes.get(person['hero_id'],str(person['hero_id'])),'own':pid==owner,'available':totals is not None,'rows':metric_rows(totals or {}),'cards':card})
   totals=personal.game_totals(db,rid,owner) or {}
-  card=card_ranking(db,owner,rid=rid);card.update(key=rid,title='이 경기 카드 순위');card['chips']=personal.chips.aggregate(db,owner,rid=rid);card['chips'].update(key=rid,title='이 경기에서 선택한 칩');card['dice']=personal.dice.aggregate(db,owner,rid=rid);details.append({'title':'경기 '+rid,'rows':metric_rows(totals),'cards':card,'participants':participants})
+  card=card_ranking(db,owner,rid=rid);card.update(key=rid,title='이 경기 카드 순위');card['chips']=personal.chips.aggregate(db,owner,rid=rid);card['chips'].update(key=rid,title='이 경기에서 선택한 칩');card['dice']=personal.dice.aggregate(db,owner,rid=rid);details.append({'replay_id':rid,'title':'경기 '+rid,'rows':metric_rows(totals),'cards':card,'participants':participants})
  overview_cards=card_ranking(db,owner,mode,map_id,hero_id,difficulty=difficulty);overview_cards['basic_rows']=aggregate_metrics(aggregate);overview_cards.update(key='overview',title='전체 카드 순위 · 현재 필터 기준');overview_cards['chips']=personal.chips.aggregate(db,owner,mode,map_id,hero_id,difficulty=difficulty);overview_cards['dice']=personal.dice.aggregate(db,owner,mode,map_id,hero_id,difficulty=difficulty)
  return {'difficulty':difficulty if difficulty is not None else -1,'difficulty_enabled':mode is None or personal.mode_family(mode)!='pvp','difficulties':difficulty_options,'page_size':page_size,'killers':killers,'card_overview':overview_cards,'row_cards':row_cards[start:start+page_size],'schema':1,'owner_id':owner,'generated_at':int(time.time()),'hero':hero_id if hero_id is not None else -1,'heroes':hero_options,'mode':mode if mode is not None else -1,'map':map_id if map_id is not None else -1,'tab':tab,'page':page,'pages':pages,'total_rows':total,'modes':mode_options,'maps':map_options,
          'summary':[str(count)+' 경기',duration(aggregate['average_duration'])+' 평균 시간']+(['승률 미분류 '+str(stats['by_family']['other']['matches'])+' 경기'] if stats['by_family']['other']['matches'] else []),'pve_summary':personal.family_summary('PvE',stats['by_family']['pve']),'pvp_summary':personal.family_summary('PvP',stats['by_family']['pvp']),
@@ -115,5 +160,6 @@ def publish(store,state):
   if any(type(v) is not int for v in (tab,page,mode,map_id,hero_id,difficulty)) or tab not in range(4) or not 0<=page<=100000 or difficulty < -2 or difficulty>=2**31:return False
   result=make_snapshot(store.db,state['owner_id'],None if mode==-1 else mode,None if map_id==-1 else map_id,tab,page,None if hero_id==-1 else hero_id,None if difficulty==-1 else difficulty)
   result['request_id']=request.get('request_id',0)
+  if request.get('detail_metric',-1)>=0:result['metric_detail']=metric_detail(store.db,state['owner_id'],request.get('detail_replay',''),request.get('detail_player',0),request.get('detail_metric'),request.get('detail_page',0))
   target=store.root/'plugin-ui-snapshot.json';temp=target.with_suffix('.part');temp.write_text(json.dumps(result,ensure_ascii=False),encoding='utf8');temp.replace(target);return True
  except (OSError,ValueError,TypeError,sqlite3.Error,OverflowError,IndexError,KeyError):return False

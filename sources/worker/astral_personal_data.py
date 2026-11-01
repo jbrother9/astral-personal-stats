@@ -51,6 +51,7 @@ def analyze(data,summary,owner):
    if actor==owner:stats['turns']+=1;add('턴 시작',{'round':roundno})
   elif op in (1003,1113):
    room=replay.protobuf(replay.first(f,1 if op==1003 else 2,b''))
+   if replay.first(room,14)>0:roundno=replay.first(room,14)
    for raw in room.get(9,[]):
     p=replay.protobuf(raw)
     if replay.first(p,1)!=owner:continue
@@ -63,7 +64,7 @@ def analyze(data,summary,owner):
   elif op==5036 and pid==owner and replay.first(f,2) and not replay.first(f,3):
    stats['battle_cards']+=1;add('전투 카드',{'card_id':replay.first(f,2)})
   elif op==1115:
-   if pid==owner:stats['deaths']+=1;add('사망',{})
+   if pid==owner:stats['deaths']+=1;add('사망',{'killer_id':replay.first(f,3)})
    elif replay.first(f,3)==owner and pid not in [p['player_id'] for p in summary['participants']]:stats['npc_last_hits']+=1;add('NPC 마지막 공격',{'target_hero_id':replay.first(f,2)})
   elif op==5022 and replay.first(f,3)==owner:add('주사위',{'move_point':replay.first(f,2)})
   elif op==5028 and pid==owner:add('이동',{'distance':len(cards.fixed32_values(f.get(2,[])))})
@@ -80,7 +81,7 @@ def analyze(data,summary,owner):
     if target!=owner:continue
     for field,kind in ((2,'골드 변화'),(3,'HP 변화')):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
-     v=replay.protobuf(effect[field][0]);add(kind,{'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'note':'피해/치유 기여도는 아직 집계하지 않음'})
+     v=replay.protobuf(effect[field][0]);add(kind,{'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0})
  settlement=summary.get('settlement',{}).get(str(owner))
  if settlement is not None:
   stats['deaths']=settlement['deaths'];add('최종 결과',settlement)
@@ -241,14 +242,14 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=7
+INSIGHTS_VERSION=8
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
  return bool(row and row[0]>=INSIGHTS_VERSION)
 
 def match_insights(db,rid,owner):
- row=db.execute('SELECT summary FROM personal_match_insights WHERE replay_id=? AND owner_id=? AND version>=?',(rid,owner,INSIGHTS_VERSION)).fetchone()
+ row=db.execute('SELECT summary FROM personal_match_insights WHERE replay_id=? AND owner_id=? AND version>=?',(rid,owner,7)).fetchone()
  return json.loads(row[0]) if row else None
 
 def save_insights(db,data,summary,owner):
@@ -276,7 +277,13 @@ def save_insights(db,data,summary,owner):
  participants=[]
  for p in summary['participants']:
   record,events=analyze(data,summary,p['player_id'])
-  participants.append({'player_id':p['player_id'],'totals':summarize_events(record,events),'cards':cards.analyze(data,p['player_id']),'chips':chips.analyze(data,p['player_id']),'dice':dice.analyze(data,p['player_id'])})
+  timeline=[]
+  for event in events:
+   if event[6] in ('성장 상태','최종 결과'):continue
+   detail=json.loads(event[7]);source=detail.get('killer_id',detail.get('source',detail.get('target',0)))
+   entity=entities.get(source) if source not in ambiguous else None
+   timeline.append({'round':event[4] or None,'kind':event[6],'detail':detail,'entity':entity,'entity_id':source})
+  participants.append({'player_id':p['player_id'],'timeline':timeline,'totals':summarize_events(record,events),'cards':cards.analyze(data,p['player_id']),'chips':chips.analyze(data,p['player_id']),'dice':dice.analyze(data,p['player_id'])})
  value={'participants':participants,'killers':[{'kind':kind,'hero_id':hero,'count':count} for (kind,hero),count in sorted(counter.items())],'unknown_deaths':unknown,'deaths':len(deaths)}
  db.execute('INSERT OR REPLACE INTO personal_match_insights VALUES (?,?,?,?)',(summary['replay_id'],owner,INSIGHTS_VERSION,json.dumps(value,ensure_ascii=False)))
 
@@ -289,7 +296,7 @@ def killer_statistics(db,owner,mode=None,map_id=None,hero_id=None,difficulty=Non
  rows=db.execute('SELECT i.version,i.summary FROM personal_matches m LEFT JOIN personal_match_insights i ON m.replay_id=i.replay_id AND m.owner_id=i.owner_id WHERE '+where,params).fetchall()
  counts=collections.Counter();analyzed=unknown=deaths=0
  for version,raw in rows:
-  if version is None or version<INSIGHTS_VERSION:continue
+  if version is None or version<7:continue
   value=json.loads(raw);analyzed+=1;unknown+=value['unknown_deaths'];deaths+=value['deaths']
   for p in value['killers']:counts[(p['kind'],p['hero_id'])]+=p['count']
  return {'analyzed':analyzed,'total':len(rows),'unknown':unknown,'deaths':deaths,'items':[{'kind':kind,'hero_id':hero,'count':count} for (kind,hero),count in sorted(counts.items(),key=lambda p:(-p[1],p[0]))[:3]]}
