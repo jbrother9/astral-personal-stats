@@ -68,9 +68,39 @@ def shop_transfers(data,players):
  return result
 
 
-def analyze(data,summary,owner,transfers=None):
+def kill_gold_rewards(data,players):
+ # Require a unique nearby NPC death, the same killer/recipient, and the NPC's known wallet.
+ wallets={};pending=None;rewards={};pos=frame=0
+ while pos<len(data):
+  op,n=struct.unpack_from('>HI',data,pos);pos+=6;raw=data[pos:pos+n];pos+=n;frame+=1
+  if pending and frame-pending['frame']>15:pending=None
+  if op in (1003,1113):
+   pending=None;room=replay.protobuf(replay.first(replay.protobuf(raw),1 if op==1003 else 2,b''))
+   for b in room.get(10,[]):
+    person=replay.protobuf(b);hero=replay.protobuf(replay.first(person,10,b''));wallets[replay.first(person,1)]=signed32(replay.first(hero,7))
+  elif op==1115:
+   f=replay.protobuf(raw);victim,killer=replay.first(f,1),replay.first(f,3);pending=None
+   if victim not in players and killer in players and wallets.get(victim,0)>0:
+    pending={'frame':frame,'killer':killer,'victim_id':victim,'hero_id':replay.first(f,2),'amount':wallets[victim]}
+  elif op in (1015,5056,5036,5216):pending=None
+  elif op==1040:
+   f=replay.protobuf(raw);cause=replay.protobuf(replay.first(f,2,b''));changes=[];has_level=False
+   for b in f.get(4,[]):
+    effect=replay.protobuf(b);has_level|=11 in effect
+    if 2 not in effect:continue
+    gold=replay.protobuf(replay.first(effect,2,b''));pid=replay.first(effect,1);after=signed32(replay.first(gold,4));before=signed32(replay.first(gold,3))
+    if pid not in players:wallets[pid]=after
+    if after!=before:changes.append((pid,after-before))
+   if pending and (changes or has_level):
+    if not has_level and replay.first(cause,1)==0 and changes==[(pending['killer'],pending['amount'])]:rewards[frame]=dict(pending)
+    pending=None
+ return rewards
+
+
+def analyze(data,summary,owner,transfers=None,kill_rewards=None):
  person=next((p for p in summary['participants'] if p['player_id']==owner),None)
  if person is None:raise ValueError('Own player not in replay')
+ if kill_rewards is None:kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
  if transfers is None:transfers=shop_transfers(data,{p['player_id'] for p in summary['participants']})
  transfer_frames={t['debit_frame']:{'direction':'sent','counterpart':t['recipient'],'amount':t['amount']} for t in transfers if t['sender']==owner}
  transfer_frames.update({t['credit_frame']:{'direction':'received','counterpart':t['sender'],'amount':t['amount']} for t in transfers if t['recipient']==owner})
@@ -153,7 +183,7 @@ def analyze(data,summary,owner,transfers=None):
     if target!=owner:continue
     for field,kind in ((2,'골드 변화'),(3,'HP 변화')):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
-     v=replay.protobuf(effect[field][0]);delta=signed32(replay.first(v,4))-signed32(replay.first(v,3));star_change=('reward' if delta>0 else 'cost' if field==2 and delta<0 else None) if star_up else None;add(kind,{'transfer':transfer_frames.get(frame) if field==2 else None,'star_change':star_change,'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
+     v=replay.protobuf(effect[field][0]);delta=signed32(replay.first(v,4))-signed32(replay.first(v,3));star_change=('reward' if delta>0 else 'cost' if field==2 and delta<0 else None) if star_up else None;add(kind,{'kill_reward':kill_rewards.get(frame) if field==2 and kill_rewards.get(frame,{}).get('killer')==owner else None,'transfer':transfer_frames.get(frame) if field==2 else None,'star_change':star_change,'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
    transfer=transfer_frames.get(frame)
    if transfer and transfer['direction']=='sent':add('골드 전달',{'amount':transfer['amount'],'target':transfer['counterpart']})
  # A repeated definition in one battle is ambiguous; do not assign a bonus by guessing order.
@@ -325,7 +355,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=12
+INSIGHTS_VERSION=13
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
@@ -357,9 +387,9 @@ def save_insights(db,data,summary,owner):
   entity=entities.get(killer)
   if not killer or killer in ambiguous or entity is None or killer==owner:unknown+=1;continue
   counter[(entity['kind'],entity['hero_id'])]+=1
- participants=[];transfers=shop_transfers(data,{p['player_id'] for p in summary['participants']})
+ participants=[];transfers=shop_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
  for p in summary['participants']:
-  record,events=analyze(data,summary,p['player_id'],transfers)
+  record,events=analyze(data,summary,p['player_id'],transfers,kill_rewards)
   timeline=[]
   for event in events:
    if event[6] in ('성장 상태','최종 결과'):continue

@@ -32,6 +32,8 @@ def metric_detail(db,owner,rid,pid,index,page=0):
  heroes=game_catalog.hero_names(db);monsters=game_catalog.names('monsters',db);card_name=card_names.resolver(db)
  reasons={1:'스킬',2:'카드',3:'이벤트',5:'운명',6:'점술',7:'버프',8:'지역 버프',9:'칸 효과',10:'폭탄 사망',11:'턴 보상',12:'전투',13:'상점 열기',14:'상점 구매',15:'맵 이벤트',16:'턴 종료',17:'칩 선택',18:'미션',19:'현상금 처치',20:'현상금 방어',21:'보스 합체',22:'방 조건',23:'럭키스타'}
  def reason(detail):
+  if detail.get('kill_reward'):
+   hero=detail['kill_reward']['hero_id'];return '처치 보상 · '+monsters.get(hero,'이름 미확인 #'+str(hero))
   if detail.get('transfer'):return '골드 전달' if detail['transfer']['direction']=='sent' else '골드 지원 받음'
   code=detail.get('cause_type');label=reasons.get(code,'원인 미확인')
   if label=='원인 미확인':label={1:'스킬',2:'카드',3:'운명',4:'점술',5:'이벤트',6:'칸 효과',7:'전투',8:'버프',9:'소환물',10:'칩 효과',11:'맵 이벤트'}.get(detail.get('damage_type'),'원인 미확인')
