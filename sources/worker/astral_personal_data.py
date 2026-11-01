@@ -119,15 +119,54 @@ def kill_gold_rewards(data,players):
  return rewards
 
 
-def analyze(data,summary,owner,transfers=None,kill_rewards=None):
+def purchase_gold_cards(data,players):
+ # Use confirmed closing offers/sold slots, not newly acquired hand cards or inferred prices.
+ sessions={};batches=[];awaiting=None;pos=frame=0
+ while pos<len(data):
+  op,n=struct.unpack_from('>HI',data,pos);pos+=6;raw=data[pos:pos+n];pos+=n;frame+=1
+  if awaiting is not None:
+   batch=awaiting;awaiting=None
+   if op==1040:
+    f=replay.protobuf(raw);cause=replay.protobuf(replay.first(f,2,b''));cost=[]
+    if replay.first(cause,1)==14:
+     for b in f.get(4,[]):
+      e=replay.protobuf(b)
+      if replay.first(e,1)!=batch['player_id'] or 2 not in e:continue
+      gold=replay.protobuf(replay.first(e,2,b''))
+      if replay.first(gold,1)==batch['player_id']:cost.append(signed32(replay.first(gold,4))-signed32(replay.first(gold,3)))
+     if len(cost)==1 and cost[0]<0:batch['debit_frame']=frame
+  if op in (1015,1003,1113):sessions.clear()
+  if op!=5216:continue
+  f=replay.protobuf(raw);pid=replay.first(f,1)
+  if pid not in players:continue
+  try:choices=cards.fixed32_values(f.get(2,[]))
+  except ValueError:sessions.pop(pid,None);continue
+  session=sessions.setdefault(pid,[])
+  if choices:
+   batch={'player_id':pid,'indices':choices};session.append(batch);batches.append(batch);awaiting=batch
+  if not replay.first(f,6):continue
+  try:
+   offers=cards.fixed32_values(f.get(4,[]));sold=[]
+   for value in f.get(5,[]):sold.extend([value] if isinstance(value,int) else value)
+   chosen=[idx for batch in session for idx in batch['indices']]
+   valid=bool(chosen) and len(offers)==len(sold) and all(v in (0,1) for v in sold) and len(chosen)==len(set(chosen)) and set(chosen)=={i for i,v in enumerate(sold) if v} and all(0<=i<len(offers) and offers[i]>0 for i in chosen)
+   if valid:
+    for batch in session:batch['card_ids']=[offers[i] for i in batch['indices']]
+  except ValueError:pass
+  sessions.pop(pid,None)
+ return {b['debit_frame']:{'player_id':b['player_id'],'card_ids':b['card_ids']} for b in batches if 'debit_frame' in b and 'card_ids' in b}
+
+
+def analyze(data,summary,owner,transfers=None,kill_rewards=None,purchases=None):
  person=next((p for p in summary['participants'] if p['player_id']==owner),None)
  if person is None:raise ValueError('Own player not in replay')
+ if purchases is None:purchases=purchase_gold_cards(data,{p['player_id'] for p in summary['participants']})
  if kill_rewards is None:kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
  if transfers is None:transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']})
  transfer_frames={t['debit_frame']:{'direction':'sent','counterpart':t['recipient'],'amount':t['amount'],'received':t.get('received',t['amount']),'source':t.get('source','shop')} for t in transfers if t['sender']==owner}
  transfer_frames.update({t['credit_frame']:{'direction':'received','counterpart':t['sender'],'amount':t['amount'],'received':t.get('received',t['amount']),'source':t.get('source','shop')} for t in transfers if t['recipient']==owner})
  events=[];stats=dict(turns=0,deaths=0,npc_last_hits=0,effect_cards=0,battle_cards=0,skills=0)
- pos=frame=roundno=0;actor=0;level=None;star_level=None;known_cards={};battle_id=0;opponent=0;battle_bonuses={}
+ pos=frame=roundno=0;actor=0;level=None;star_level=None;known_cards={};battle_id=0;opponent=0;battle_bonuses={};lethal_hits={}
  def target_ids(values):
   result=[]
   for value in values:
@@ -147,6 +186,7 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None):
   op,n=struct.unpack_from('>HI',data,pos);pos+=6;body=data[pos:pos+n];pos+=n;frame+=1
   if op not in (1003,1113,1015,5056,5036,1115,1040,5022,5028,5212,1109,1007):continue
   f=replay.protobuf(body);pid=replay.first(f,1)
+  if op in (1015,1003,1113,5056,5036):lethal_hits.clear()
   if op==1007:
    battle=replay.protobuf(replay.first(f,1,b''));battle_id=replay.first(battle,1);opponent=0
    attacker=replay.protobuf(replay.first(battle,2,b''));defender=replay.protobuf(replay.first(battle,3,b''))
@@ -178,8 +218,10 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None):
   elif op==5036 and pid==owner and replay.first(f,2) and not replay.first(f,3):
    stats['battle_cards']+=1;add('전투 카드',{'card_id':replay.first(f,2),'definition_id':known_cards.get(replay.first(f,2)),'battle_id':battle_id,'opponent_id':opponent})
   elif op==1115:
-   if pid==owner:stats['deaths']+=1;add('사망',{'killer_id':replay.first(f,3)})
-   elif replay.first(f,3)==owner and pid not in [p['player_id'] for p in summary['participants']]:stats['npc_last_hits']+=1;add('NPC 마지막 공격',{'target_hero_id':replay.first(f,2)})
+   hit=lethal_hits.pop(pid,None);killer=replay.first(f,3);health={}
+   if hit and frame-hit['frame']<=5 and hit['source'] in (0,killer):health={key:hit[key] for key in ('hp_before','hp_after','damage_value')}
+   if pid==owner:stats['deaths']+=1;add('사망',{'killer_id':killer,**health})
+   elif killer==owner and pid not in [p['player_id'] for p in summary['participants']]:stats['npc_last_hits']+=1;add('NPC 마지막 공격',{'target_hero_id':replay.first(f,2),**health})
   elif op==5022 and replay.first(f,3)==owner:add('주사위',{'move_point':replay.first(f,2)})
   elif op==5028 and pid==owner:add('이동',{'distance':len(cards.fixed32_values(f.get(2,[])))})
   elif op==5212 and pid==owner and replay.first(f,2):add('칩 선택 응답',{'relic_id':replay.first(f,2),'is_reroll':bool(replay.first(f,3))})
@@ -197,15 +239,18 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None):
     target=replay.first(effect,1)
     if 3 in effect and isinstance(effect[3][0],bytes):
      hp=replay.protobuf(effect[3][0]);source=replay.first(hp,9);damage_type=replay.first(hp,8)
+     hp_before=signed32(replay.first(hp,3));hp_after=signed32(replay.first(hp,4));hit_change=signed32(replay.first(hp,2))
+     lethal_hits.pop(target,None)
+     if hp_before>0 and hp_after<=0:lethal_hits[target]={'frame':frame,'source':source,'hp_before':hp_before,'hp_after':hp_after,'damage_value':-hit_change if hit_change<0 else max(0,hp_before-hp_after)}
      if source==owner and target and target!=owner and 1<=damage_type<=11:
       before=signed32(replay.first(hp,3));after=signed32(replay.first(hp,4));amount=max(0,max(0,before)-max(0,after))
-      if amount:add('가한 피해',{'amount':amount,'target':target,'damage_type':damage_type,**origin})
-      requested=signed32(replay.first(hp,2))
-      if damage_type==7 and requested<0:add('전투 피해',{'amount':-requested,'target':target,'damage_type':7,**origin})
+      requested=signed32(replay.first(hp,2));health={'hp_before':before,'hp_after':after}
+      if amount or requested<0:add('가한 피해',{'amount':amount,'damage_value':-requested if requested<0 else amount,'target':target,'damage_type':damage_type,**health,**origin})
+      if damage_type==7 and requested<0:add('전투 피해',{'amount':-requested,'target':target,'damage_type':7,**health,**origin})
     if target!=owner:continue
     for field,kind in ((2,'골드 변화'),(3,'HP 변화')):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
-     v=replay.protobuf(effect[field][0]);delta=signed32(replay.first(v,4))-signed32(replay.first(v,3));star_change=('reward' if delta>0 else 'cost' if field==2 and delta<0 else None) if star_up else None;add(kind,{'kill_reward':kill_rewards.get(frame) if field==2 and kill_rewards.get(frame,{}).get('killer')==owner else None,'transfer':transfer_frames.get(frame) if field==2 else None,'star_change':star_change,'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
+     v=replay.protobuf(effect[field][0]);delta=signed32(replay.first(v,4))-signed32(replay.first(v,3));star_change=('reward' if delta>0 else 'cost' if field==2 and delta<0 else None) if star_up else None;add(kind,{'purchase_card_ids':purchases.get(frame,{}).get('card_ids') if field==2 and purchases.get(frame,{}).get('player_id')==owner else None,'kill_reward':kill_rewards.get(frame) if field==2 and kill_rewards.get(frame,{}).get('killer')==owner else None,'transfer':transfer_frames.get(frame) if field==2 else None,'star_change':star_change,'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
    transfer=transfer_frames.get(frame)
    if transfer and transfer['direction']=='sent':add('골드 전달',{'amount':transfer['amount'],'received':transfer.get('received',transfer['amount']),'source':transfer.get('source','shop'),'target':transfer['counterpart']})
  # A repeated definition in one battle is ambiguous; do not assign a bonus by guessing order.
@@ -377,7 +422,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=14
+INSIGHTS_VERSION=17
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
@@ -409,9 +454,9 @@ def save_insights(db,data,summary,owner):
   entity=entities.get(killer)
   if not killer or killer in ambiguous or entity is None or killer==owner:unknown+=1;continue
   counter[(entity['kind'],entity['hero_id'])]+=1
- participants=[];transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
+ participants=[];transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']});purchases=purchase_gold_cards(data,{p['player_id'] for p in summary['participants']})
  for p in summary['participants']:
-  record,events=analyze(data,summary,p['player_id'],transfers,kill_rewards)
+  record,events=analyze(data,summary,p['player_id'],transfers,kill_rewards,purchases)
   timeline=[]
   for event in events:
    if event[6] in ('성장 상태','최종 결과'):continue

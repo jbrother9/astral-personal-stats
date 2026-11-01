@@ -286,7 +286,7 @@ namespace AstralPersonalMod {
    }
    int order=(int)NativeUI.Long(window,"sortingOrder");if(NativeUI.Long(cameraButton,"sortingOrder")!=order+1)NativeUI.Set(cameraButton,"sortingOrder",order+1);if(NativeUI.Long(captureToast,"sortingOrder")!=order+2)NativeUI.Set(captureToast,"sortingOrder",order+2);
    if(capturePlacement.Changed(rootWidth,NativeUI.Float(root,"height"),bounds)){
-   NativeUI.Call(cameraButton,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(cameraButton,"SetXY",Math.Max(4,bounds.X-48*bounds.Scale),Math.Max(4,bounds.Y+8*bounds.Scale));
+   NativeUI.Call(cameraButton,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(cameraButton,"SetXY",Math.Max(4,bounds.X-40*bounds.Scale),Math.Max(4,bounds.Y+8*bounds.Scale));
    NativeUI.Call(captureToast,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(captureToast,"SetXY",Math.Max(4,Math.Min(rootWidth-360*bounds.Scale-4,bounds.X+(bounds.Width-360*bounds.Scale)/2)),Math.Max(4,bounds.Y-48*bounds.Scale));
    }
    bool cameraVisible=captureFrame<0,toastVisible=toastUntil>Time.realtimeSinceStartup&&captureFrame<0;if(NativeUI.Bool(cameraButton,"visible")!=cameraVisible)NativeUI.Set(cameraButton,"visible",cameraVisible);if(NativeUI.Bool(captureToast,"visible")!=toastVisible)NativeUI.Set(captureToast,"visible",toastVisible);

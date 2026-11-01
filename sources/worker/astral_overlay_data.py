@@ -42,6 +42,9 @@ def metric_detail(db,owner,rid,pid,index,page=0):
   code=detail.get('cause_type');label=reasons.get(code,'원인 미확인')
   if label=='원인 미확인':label={1:'스킬',2:'카드',3:'운명',4:'점술',5:'이벤트',6:'칸 효과',7:'전투',8:'버프',9:'소환물',10:'칩 효과',11:'맵 이벤트'}.get(detail.get('damage_type'),'원인 미확인')
   if label=='원인 미확인' and detail.get('star_change') in ('reward','cost'):label='스타 보상' if detail['star_change']=='reward' else '스타 상승 비용'
+  if code==14 and detail.get('purchase_card_ids'):
+   from collections import Counter
+   purchased=Counter(detail['purchase_card_ids']);label+=' · '+', '.join(card_name(id)+((' ×'+str(count)) if count>1 else '') for id,count in purchased.items())
   if code==2 and detail.get('cause_id'):label+=' · '+card_name(detail['cause_id'])
   return label
  def entity_label(event):
@@ -70,7 +73,11 @@ def metric_detail(db,owner,rid,pid,index,page=0):
     transfer=d['transfer'];text+=(' → ' if transfer['direction']=='sent' else ' ← ')+target_label(event['transfer_party'])
     if transfer.get('received',transfer['amount'])!=transfer['amount']:text+=' · 지불 '+str(transfer['amount'])+' / 수령 '+str(transfer['received'])+'골드'+transfer_difference(transfer)
    if key=='damage_taken' and event.get('entity'):text+=' · '+entity_label(event)
-  elif key in ('damage_dealt','max_battle_damage'):text=entity_label(event)+' · '+str(d.get('amount',0))+' 피해 · '+reason(d)
+  elif key in ('damage_dealt','max_battle_damage'):
+   value=d.get('damage_value',d.get('amount',0));text=entity_label(event)+' · '+str(value)+' 피해'
+   if 'hp_before' in d and 'hp_after' in d:
+    before=max(0,d['hp_before']);after=max(0,d['hp_after']);delta=after-before;text+=' · HP '+str(before)+' → '+str(after)+' ('+('+' if delta>0 else '')+str(delta)+')'
+   text+=' · '+reason(d)
   elif key=='transferred_gold':text=entity_label(event)+' · 지불 '+str(d.get('amount',0))+' / 수령 '+str(d.get('received',d.get('amount',0)))+'골드'+(' · 스킬 전달' if d.get('source')=='skill' else '')+transfer_difference(d)
   elif key=='movement_distance':text=str(d.get('distance',0))+'칸 이동'
   elif key=='dice_events':text='이동 주사위 '+str(d.get('move_point',0))
@@ -80,11 +87,19 @@ def metric_detail(db,owner,rid,pid,index,page=0):
   elif key=='npc_last_hits':
    hid=d.get('target_hero_id',0);text=monsters.get(hid,'이름 미확인 #'+str(hid))+' 마지막 공격'
   elif key in ('effect_cards','battle_cards'):text=card_name(d['definition_id']) if d.get('definition_id') else '카드명 연결 미확인'
+  if key in ('deaths','npc_last_hits') and 'hp_before' in d and 'hp_after' in d:
+   before=max(0,d['hp_before']);after=max(0,d['hp_after']);delta=after-before;text+=' · HP '+str(before)+' → '+str(after)+' ('+('+' if delta>0 else '')+str(delta)+')'
   if key in ('effect_cards','skills') and event.get('targets'):text+=' → '+', '.join(target_label(target) for target in event['targets'])
   if key=='battle_cards':
    if event.get('opponent',{}).get('id'):text+=' · 전투 상대: '+target_label(event['opponent'])
    if 'card_bonus' in d:text+=' · 카드 보너스 '+('+' if d['card_bonus']>=0 else '')+str(d['card_bonus'])
   rows.append([str(event['round'])+'턴' if event.get('round') else '턴 미확인',text])
+ if key=='movement_distance':
+  per_turn={}
+  for event in (participant or {}).get('timeline',[]):
+   if event['kind']=='이동':
+    turn=event.get('round');per_turn[turn]=per_turn.get(turn,0)+event['detail'].get('distance',0)
+  rows=[[str(turn)+'턴' if turn is not None else '턴 미확인 합계','총 '+str(distance)+'칸 이동'] for turn,distance in per_turn.items()]
  total=len(rows);pages=max(1,(total+7)//8);page=max(0,min(page,pages-1))
  note='리플레이에서 관찰한 기록입니다. 결과창 합계와 집계 기준이 다를 수 있습니다.'
  if participant is None or 'timeline' not in participant:note='세부 기록 분석이 필요합니다. 리플레이가 남아 있으면 백그라운드에서 보완합니다.'
@@ -93,6 +108,7 @@ def metric_detail(db,owner,rid,pid,index,page=0):
   note='확인된 지불액 '+str(confirmed)+'골드 · 결과 전달 합계 '+(str(settled)+'골드' if settled is not None else '미확인')
   if settled is not None and confirmed!=settled:note+=' · 일부 전달 경로는 아직 확인되지 않았습니다.'
  elif key=='max_battle_damage':note='결과창의 최대 전투 피해와 같은 금액의 전투 이벤트입니다. 같은 최댓값이 여러 번 나오면 모두 표시합니다.'
+ elif key=='damage_dealt':note='피해값과 대상의 HP 변화를 함께 표시합니다. 남은 HP보다 큰 피해는 실제 HP 감소량과 다릅니다.'
  elif key=='damage_taken':note='HP 감소 내역입니다. 결과창의 받은 피해량과 같은 기준이라고 볼 수 없습니다.'
  elif not rows:note='관찰된 세부 기록이 없습니다. 최종 합계가 0이 아니라면 기록 누락 또는 집계 기준 차이일 수 있습니다.'
  return {'replay_id':rid,'player_id':pid,'metric':index,'title':title,'page':page,'pages':pages,'total':total,'rows':rows[page*8:page*8+8],'note':note}
