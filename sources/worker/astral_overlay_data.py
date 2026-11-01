@@ -31,6 +31,10 @@ def metric_detail(db,owner,rid,pid,index,page=0):
  people={p['player_id']:p for p in personal.appearances(db,rid,owner)}
  heroes=game_catalog.hero_names(db);monsters=game_catalog.names('monsters',db);card_name=card_names.resolver(db)
  reasons={1:'스킬',2:'카드',3:'이벤트',5:'운명',6:'점술',7:'버프',8:'지역 버프',9:'칸 효과',10:'폭탄 사망',11:'턴 보상',12:'전투',13:'상점 열기',14:'상점 구매',15:'맵 이벤트',16:'턴 종료',17:'칩 선택',18:'미션',19:'현상금 처치',20:'현상금 방어',21:'보스 합체',22:'방 조건',23:'럭키스타'}
+ def transfer_difference(value):
+  paid=value.get('amount',0);received=value.get('received',paid);delta=received-paid
+  if not delta:return ''
+  return ' · '+('추가 획득 +' if delta>0 else '수령 차이 ')+str(delta)+'골드 (원인 미확인)'
  def reason(detail):
   if detail.get('kill_reward'):
    hero=detail['kill_reward']['hero_id'];return '처치 보상 · '+monsters.get(hero,'이름 미확인 #'+str(hero))
@@ -62,10 +66,12 @@ def metric_detail(db,owner,rid,pid,index,page=0):
    if (increase and delta<=0) or (not increase and delta>=0):continue
    text=str(d.get('before',0))+' → '+str(d.get('after',0))+' ('+('+' if delta>0 else '')+str(delta)+')'
    text+=' · '+reason(d)
-   if d.get('transfer'):text+=(' → ' if d['transfer']['direction']=='sent' else ' ← ')+target_label(event['transfer_party'])
+   if d.get('transfer'):
+    transfer=d['transfer'];text+=(' → ' if transfer['direction']=='sent' else ' ← ')+target_label(event['transfer_party'])
+    if transfer.get('received',transfer['amount'])!=transfer['amount']:text+=' · 지불 '+str(transfer['amount'])+' / 수령 '+str(transfer['received'])+'골드'+transfer_difference(transfer)
    if key=='damage_taken' and event.get('entity'):text+=' · '+entity_label(event)
   elif key in ('damage_dealt','max_battle_damage'):text=entity_label(event)+' · '+str(d.get('amount',0))+' 피해 · '+reason(d)
-  elif key=='transferred_gold':text=entity_label(event)+'에게 '+str(d.get('amount',0))+'골드 전달'
+  elif key=='transferred_gold':text=entity_label(event)+' · 지불 '+str(d.get('amount',0))+' / 수령 '+str(d.get('received',d.get('amount',0)))+'골드'+(' · 스킬 전달' if d.get('source')=='skill' else '')+transfer_difference(d)
   elif key=='movement_distance':text=str(d.get('distance',0))+'칸 이동'
   elif key=='dice_events':text='이동 주사위 '+str(d.get('move_point',0))
   elif key=='chip_selection_events':
@@ -84,7 +90,7 @@ def metric_detail(db,owner,rid,pid,index,page=0):
  if participant is None or 'timeline' not in participant:note='세부 기록 분석이 필요합니다. 리플레이가 남아 있으면 백그라운드에서 보완합니다.'
  elif key=='transferred_gold':
   confirmed=sum(e['detail'].get('amount',0) for e in participant.get('timeline',[]) if e['kind']=='골드 전달');settled=participant['totals'].get('transferred_gold')
-  note='확인된 전달 '+str(confirmed)+'골드 · 결과 합계 '+(str(settled)+'골드' if settled is not None else '미확인')
+  note='확인된 지불액 '+str(confirmed)+'골드 · 결과 전달 합계 '+(str(settled)+'골드' if settled is not None else '미확인')
   if settled is not None and confirmed!=settled:note+=' · 일부 전달 경로는 아직 확인되지 않았습니다.'
  elif key=='max_battle_damage':note='결과창의 최대 전투 피해와 같은 금액의 전투 이벤트입니다. 같은 최댓값이 여러 번 나오면 모두 표시합니다.'
  elif key=='damage_taken':note='HP 감소 내역입니다. 결과창의 받은 피해량과 같은 기준이라고 볼 수 없습니다.'

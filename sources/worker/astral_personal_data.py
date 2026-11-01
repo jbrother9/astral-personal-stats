@@ -36,15 +36,15 @@ def init(db):
  ''');db.commit()
 def signed32(x):return x-2**32 if x>=2**31 else x
 
-def shop_transfers(data,players):
- # A three-packet window bounds extra memory; amount alone never identifies a transfer.
+def gold_transfers(data,players,include_skills=True):
+ # Explicit declaration + attributable debit/credit. Amounts need not be equal.
  from collections import deque
  window=deque(maxlen=3);result=[];pos=frame=roundno=0
- def change(packet,pid):
+ def change(packet,pid,cause_type,skill=0):
   _,op,raw,_=packet
   if op!=1040:return None
   f=replay.protobuf(raw);cause=replay.protobuf(replay.first(f,2,b''))
-  if replay.first(cause,1)!=14:return None
+  if replay.first(cause,1)!=cause_type or skill and replay.first(cause,3)!=skill:return None
   values=[]
   for raw_effect in f.get(4,[]):
    effect=replay.protobuf(raw_effect)
@@ -53,19 +53,41 @@ def shop_transfers(data,players):
    if replay.first(value,1)!=pid:return None
    values.append(signed32(replay.first(value,4))-signed32(replay.first(value,3)))
   return values[0] if len(values)==1 else None
+ def targets(values):
+  result=[]
+  for value in values:
+   if isinstance(value,int):result.append(value)
+   elif isinstance(value,bytes):
+    offset=0
+    while offset<len(value):number,offset=varint(value,offset);result.append(number)
+  return list(dict.fromkeys(v for v in result if v>0))
  while pos<len(data):
   op,n=struct.unpack_from('>HI',data,pos);pos+=6;raw=data[pos:pos+n];pos+=n;frame+=1
   if op==1015:roundno=replay.first(replay.protobuf(raw),1)
   elif op in (1003,1113):
    room=replay.protobuf(replay.first(replay.protobuf(raw),1 if op==1003 else 2,b''));roundno=replay.first(room,14,roundno)
   window.append((frame,op,raw,roundno))
-  if len(window)!=3 or window[0][1]!=5216:continue
-  declaration=window[0];f=replay.protobuf(declaration[2]);sender,recipient=replay.first(f,1),replay.first(f,3)
-  if sender==recipient or sender not in players or recipient not in players or f.get(2):continue
-  debit,credit=change(window[1],sender),change(window[2],recipient)
-  if debit is None or credit is None or debit>=0 or credit!=-debit:continue
-  result.append({'sender':sender,'recipient':recipient,'amount':credit,'round':declaration[3],'debit_frame':window[1][0],'credit_frame':window[2][0]})
+  if len(window)!=3:continue
+  declaration=window[0];op=declaration[1]
+  if op!=5216 and (not include_skills or op!=5056):continue
+  f=replay.protobuf(declaration[2]);sender=replay.first(f,1);skill=0
+  if op==5216:
+   recipient=replay.first(f,3);cause_type=14;source='shop'
+   if f.get(2):continue
+  else:
+   selected=targets(f.get(3,[]));skill=replay.first(f,9)
+   if not replay.first(f,8) or not skill or len(selected)!=1:continue
+   recipient=selected[0];cause_type=1;source='skill'
+  if sender==recipient or sender not in players or recipient not in players:continue
+  debit=change(window[1],sender,cause_type,skill);credit=change(window[1],recipient,cause_type,skill);credit_packet=window[1]
+  if credit is None:credit=change(window[2],recipient,cause_type,skill);credit_packet=window[2]
+  if debit is None or credit is None or debit>=0 or credit<=0:continue
+  result.append({'sender':sender,'recipient':recipient,'amount':-debit,'received':credit,'source':source,'source_skill_id':skill,'round':declaration[3],'debit_frame':window[1][0],'credit_frame':credit_packet[0]})
  return result
+
+
+def shop_transfers(data,players):
+ return gold_transfers(data,players,include_skills=False)
 
 
 def kill_gold_rewards(data,players):
@@ -101,9 +123,9 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None):
  person=next((p for p in summary['participants'] if p['player_id']==owner),None)
  if person is None:raise ValueError('Own player not in replay')
  if kill_rewards is None:kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
- if transfers is None:transfers=shop_transfers(data,{p['player_id'] for p in summary['participants']})
- transfer_frames={t['debit_frame']:{'direction':'sent','counterpart':t['recipient'],'amount':t['amount']} for t in transfers if t['sender']==owner}
- transfer_frames.update({t['credit_frame']:{'direction':'received','counterpart':t['sender'],'amount':t['amount']} for t in transfers if t['recipient']==owner})
+ if transfers is None:transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']})
+ transfer_frames={t['debit_frame']:{'direction':'sent','counterpart':t['recipient'],'amount':t['amount'],'received':t.get('received',t['amount']),'source':t.get('source','shop')} for t in transfers if t['sender']==owner}
+ transfer_frames.update({t['credit_frame']:{'direction':'received','counterpart':t['sender'],'amount':t['amount'],'received':t.get('received',t['amount']),'source':t.get('source','shop')} for t in transfers if t['recipient']==owner})
  events=[];stats=dict(turns=0,deaths=0,npc_last_hits=0,effect_cards=0,battle_cards=0,skills=0)
  pos=frame=roundno=0;actor=0;level=None;star_level=None;known_cards={};battle_id=0;opponent=0;battle_bonuses={}
  def target_ids(values):
@@ -185,7 +207,7 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None):
      if field not in effect or not isinstance(effect[field][0],bytes):continue
      v=replay.protobuf(effect[field][0]);delta=signed32(replay.first(v,4))-signed32(replay.first(v,3));star_change=('reward' if delta>0 else 'cost' if field==2 and delta<0 else None) if star_up else None;add(kind,{'kill_reward':kill_rewards.get(frame) if field==2 and kill_rewards.get(frame,{}).get('killer')==owner else None,'transfer':transfer_frames.get(frame) if field==2 else None,'star_change':star_change,'before':signed32(replay.first(v,3)),'after':signed32(replay.first(v,4)),'requested_change':signed32(replay.first(v,2)),'source':replay.first(v,9) if field==3 else 0,'damage_type':replay.first(v,8) if field==3 else None,**origin})
    transfer=transfer_frames.get(frame)
-   if transfer and transfer['direction']=='sent':add('골드 전달',{'amount':transfer['amount'],'target':transfer['counterpart']})
+   if transfer and transfer['direction']=='sent':add('골드 전달',{'amount':transfer['amount'],'received':transfer.get('received',transfer['amount']),'source':transfer.get('source','shop'),'target':transfer['counterpart']})
  # A repeated definition in one battle is ambiguous; do not assign a bonus by guessing order.
  battle_events={}
  for i,event in enumerate(events):
@@ -355,7 +377,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=13
+INSIGHTS_VERSION=14
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
@@ -387,7 +409,7 @@ def save_insights(db,data,summary,owner):
   entity=entities.get(killer)
   if not killer or killer in ambiguous or entity is None or killer==owner:unknown+=1;continue
   counter[(entity['kind'],entity['hero_id'])]+=1
- participants=[];transfers=shop_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
+ participants=[];transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']})
  for p in summary['participants']:
   record,events=analyze(data,summary,p['player_id'],transfers,kill_rewards)
   timeline=[]
