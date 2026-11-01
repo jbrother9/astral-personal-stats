@@ -103,6 +103,8 @@ namespace AstralPersonalMod {
   IObject lobby,cachedLobby;float lobbyWidth=-1,lobbyHeight=-1;
   IObject cachedProfile;bool entryLayoutApplied,entryStampValid,windowHidden=true;
   bool styleBold;int styleScreenWidth,styleScreenHeight,styleFontSize;long styleGeneration=-1;float styleWidth,styleHeight,styleScaleX,styleScaleY;string styleFont;
+  readonly UiPlacementCache capturePlacement=new UiPlacementCache();
+  IObject cameraButton,captureToast,captureToastText;byte[] captureImage;int captureFrame=-1;float captureDeadline,nextClipboardTry,toastUntil;
   float nextFit;int shieldOrder=int.MinValue;
   readonly UiPlacementCache placement=new UiPlacementCache();
   long snapshotFileTicks=-1,snapshotFileLength=-1;string snapshotPresentation;int snapshotSelection=int.MinValue;
@@ -118,9 +120,9 @@ namespace AstralPersonalMod {
   Color pink=new Color(.94f,.20f,.61f,1),lime=new Color(.78f,1f,.17f,1),lavender=new Color(.87f,.82f,.95f,1),rose=new Color(.98f,.82f,.90f,1);
   const float W=StatsLayout.Width,H=StatsLayout.Height;
   public void Update(){float now=Time.realtimeSinceStartup;try{
-   if(owner!=AccountId){CloseStats();Restore();DisposeEntry();if(window!=null){NativeUI.Call(window,"Dispose");window=null;}profile=main=entry=template=null;clicks.Clear();paints.Clear();hover=IntPtr.Zero;pressed=IntPtr.Zero;modeChoices=mapChoices=heroChoices=difficultyChoices=null;owner=AccountId;snapshot=null;cachedProfile=null;lobbyWidth=lobbyHeight=-1;entryStampValid=false;snapshotPresentation=null;placement.Invalidate();mode=map=hero=difficulty=-1;page=0;tab=3;}
+   if(owner!=AccountId){CloseStats();DisposeCaptureChrome();Restore();DisposeEntry();if(window!=null){NativeUI.Call(window,"Dispose");window=null;}profile=main=entry=template=null;clicks.Clear();paints.Clear();hover=IntPtr.Zero;pressed=IntPtr.Zero;modeChoices=mapChoices=heroChoices=difficultyChoices=null;owner=AccountId;snapshot=null;cachedProfile=null;lobbyWidth=lobbyHeight=-1;entryStampValid=false;snapshotPresentation=null;placement.Invalidate();mode=map=hero=difficulty=-1;page=0;tab=3;}
    UpdateEntry();if(now>=nextDiagnostic){Diagnostic(open?"open":entry!=null&&NativeUI.Bool(entry,"visible")?"button_attached":owner>0?"waiting_for_bottom_menu":"waiting_for_login");nextDiagnostic=now+10;}
-   if(open){if(catalogGeneration!=RuntimeGameCatalog.Generation){catalogGeneration=RuntimeGameCatalog.Generation;Render();}portraits.Update();if(now>=nextCollectionRead){nextCollectionRead=now+1;ReadCollectionStatus();}if(!SearchVisible(lobby)){CloseStats();return;}if(now>=nextRevisionCheck){nextRevisionCheck=now+.5f;CheckRevision();}if(refreshDue>0&&now>=refreshDue){refreshDue=0;Request();}if(awaitingSnapshot&&now>=nextRead){nextRead=now+.25f;if(now<responseDeadline)ReadSnapshot();else awaitingSnapshot=false;}if(now>=nextFit){nextFit=now+.1f;Fit();}}
+   if(open){if(catalogGeneration!=RuntimeGameCatalog.Generation){catalogGeneration=RuntimeGameCatalog.Generation;Render();}portraits.Update();if(now>=nextCollectionRead){nextCollectionRead=now+1;ReadCollectionStatus();}if(!SearchVisible(lobby)){CloseStats();return;}if(now>=nextRevisionCheck){nextRevisionCheck=now+.5f;CheckRevision();}if(refreshDue>0&&now>=refreshDue){refreshDue=0;Request();}if(awaitingSnapshot&&now>=nextRead){nextRead=now+.25f;if(now<responseDeadline)ReadSnapshot();else awaitingSnapshot=false;}if(now>=nextFit){nextFit=now+.1f;Fit();}UpdateCapture(now);}
   }catch(Exception e){RuntimeDiagnostics.Error("profile.update",e);if(now>=nextError){Plugin.Instance.Log.LogWarning("Profile statistics UI retry: "+e.GetType().Name+" / "+e.Message);Diagnostic("ui_retry");nextError=now+15;}}}
   void Diagnostic(string state){try{File.WriteAllText(Path.Combine(Plugin.Instance.DataDir,"plugin-ui-state.json"),"{\"owner_id\":"+owner+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+state+"\",\"profile_found\":"+(profileFound?"true":"false")+",\"profile_player_id\":"+profilePlayerId+",\"window_showing\":"+(window!=null&&NativeUI.Bool(window,"isShowing")?"true":"false")+",\"window_on_stage\":"+(window!=null&&NativeUI.Bool(window,"onStage")?"true":"false")+",\"window_order\":"+NativeUI.Long(window,"sortingOrder")+",\"profile_order\":"+NativeUI.Long(profile,"sortingOrder")+",\"shield_on_stage\":"+(shield!=null&&NativeUI.Bool(shield,"onStage")?"true":"false")+",\"profile_touchable\":"+(NativeUI.Bool(profile,"touchable")?"true":"false")+"}");}catch{}}
   IObject uiManager;bool profileObserved;
@@ -209,7 +211,7 @@ namespace AstralPersonalMod {
    PollDropdownScroll();PollHover();
    bool down=Input.GetMouseButtonDown(0),up=Input.GetMouseButtonUp(0);if(!down&&!up)return;
    if(owner<=0||clicks.Count==0)return;
-   var root=NativeUI.Static("FairyGUI.GRoot","inst");var hit=NativeUI.Get(root,"touchTarget");bool insideDropdown=Within(hit,dropdown);IntPtr target=IntPtr.Zero;if(open&&!Within(hit,window)){if(down){pressed=IntPtr.Zero;CloseDropdown();}return;}
+   var root=NativeUI.Static("FairyGUI.GRoot","inst");var hit=NativeUI.Get(root,"touchTarget");bool insideDropdown=Within(hit,dropdown);IntPtr target=IntPtr.Zero;if(open&&!Within(hit,window)&&!Within(hit,cameraButton)){if(down){pressed=IntPtr.Zero;CloseDropdown();}return;}
    for(int i=0;hit!=null&&i<24;i++,hit=NativeUI.Get(hit,"parent")){
     if(clicks.TryGetValue(hit.Pointer,out var binding)&&!NativeUI.Bool(binding.Button,"isDisposed")&&NativeUI.Bool(binding.Button,"onStage")&&NativeUI.Bool(binding.Button,"visible")){target=hit.Pointer;break;}
    }
@@ -234,7 +236,7 @@ namespace AstralPersonalMod {
   IObject Component(IObject parent,float x,float y,float w,float h){var c=NativeUI.New("FairyGUI.GComponent");NativeUI.Call(c,"SetXY",x,y);NativeUI.Call(c,"SetSize",w,h);if(parent!=null)NativeUI.Call(parent,"AddChild",c);return c;}
   void Rect(IObject parent,float x,float y,float w,float h,Color fill){var graph=NativeUI.New("FairyGUI.GGraph");NativeUI.Call(graph,"SetXY",x,y);NativeUI.Call(graph,"SetSize",w,h);NativeUI.Call(graph,"DrawRect",w,h,1,line,fill);NativeUI.Set(graph,"touchable",false);NativeUI.Call(parent,"AddChild",graph);}
   IObject Label(IObject parent,string value,float x,float y,float w,float h,int size=19,bool bold=false){var t=NativeUI.New("FairyGUI.GTextField");var format=NativeUI.New("FairyGUI.TextFormat");if(font!=null)NativeUI.Set(format,"font",font);NativeUI.Set(format,"size",size);NativeUI.Set(format,"color",ink);NativeUI.Set(format,"bold",bold&&size>=24);NativeUI.Set(t,"textFormat",format);NativeUI.Set(t,"autoSize",3);NativeUI.Set(t,"singleLine",true);NativeUI.Set(t,"touchable",false);NativeUI.Call(t,"SetXY",x,y);NativeUI.Call(t,"SetSize",w,h);NativeUI.Set(t,"text",value??"");NativeUI.Call(parent,"AddChild",t);return t;}
-  void Build(){
+  void Build(){DisposeCaptureChrome();
    window=NativeUI.New("FairyGUI.Window");pane=Component(null,0,0,W,H);NativeUI.Set(pane,"opaque",true);
    Round(pane,0,0,W,H,paper,24);Round(pane,0,0,W,9,pink,4);Round(pane,18,18,214,82,lavender,18);
    Label(pane,"내 전적",34,20,190,38,31,true);collectionLabel=Label(pane,"수집 상태 확인 중",35,58,195,18,12);shownCollectionLabel=shownCollectionKind=null;status=Label(pane,"플레이 기록 확인 중",35,79,195,18,12);
@@ -253,11 +255,12 @@ namespace AstralPersonalMod {
   }
   public void OpenStats(){try{metricIndex=-1;metricPage=0;if(owner<=0||!IsHomeScreen())return;RuntimeDiagnostics.View(true);placement.Invalidate();nextFit=0;if(window==null||NativeUI.Bool(window,"isDisposed"))Build();EnsureFrontOrder();windowHidden=false;NativeUI.Call(window,"Show");NativeUI.Call(window,"BringToFront");open=true;catalogGeneration=RuntimeGameCatalog.Generation;nextCollectionRead=0;BlockProfile();Fit();selected=-1;cardKey=null;diceView=chipView=cardView=false;revisionTicks=-1;revisionLength=-1;revisionValue=0;CheckRevision(true);Request();nextRead=0;Render();}catch(Exception e){RuntimeDiagnostics.Error("profile.open",e);Plugin.Instance.Log.LogWarning("Could not open statistics: "+e.GetType().Name+" / "+e.Message);Diagnostic("open_failed");CloseStats();if(window!=null){try{NativeUI.Call(window,"Dispose");}catch{}window=null;}}}
   public void CloseStats(){
+   captureImage=null;captureFrame=-1;toastUntil=0;if(cameraButton!=null&&!NativeUI.Bool(cameraButton,"isDisposed"))NativeUI.Set(cameraButton,"visible",false);if(captureToast!=null&&!NativeUI.Bool(captureToast,"isDisposed"))NativeUI.Set(captureToast,"visible",false);
    awaitingSnapshot=false;refreshDue=0;if(open)WriteClosedRequest();RuntimeDiagnostics.View(false);if(!open&&windowHidden&&shield==null&&blockedProfile==null&&dropdown==null)return;
    diceView=false;chipView=false;selectedPlayer=0;portraits.Clear();cardView=false;cardKey=null;
    try{CloseDropdown();}finally{ReleaseModal();open=false;selected=-1;if(window==null)windowHidden=true;else try{if(!NativeUI.Bool(window,"isDisposed"))NativeUI.Call(window,"Hide");windowHidden=true;}catch{}}
   }
-  void EnsureFrontOrder(){if(window==null||lobby==null)return;long order=0;var ancestor=lobby;for(int depth=0;ancestor!=null&&depth<32;depth++,ancestor=NativeUI.Get(ancestor,"parent"))order=Math.Max(order,NativeUI.Long(ancestor,"sortingOrder"));int target=(int)Math.Min(int.MaxValue-1,Math.Max(0,order)+2);if(NativeUI.Long(window,"sortingOrder")!=target)NativeUI.Set(window,"sortingOrder",target);}
+  void EnsureFrontOrder(){if(window==null||lobby==null)return;long order=0;var ancestor=lobby;for(int depth=0;ancestor!=null&&depth<32;depth++,ancestor=NativeUI.Get(ancestor,"parent"))order=Math.Max(order,NativeUI.Long(ancestor,"sortingOrder"));int target=(int)Math.Min(int.MaxValue-3,Math.Max(0,order)+2);if(NativeUI.Long(window,"sortingOrder")!=target)NativeUI.Set(window,"sortingOrder",target);}
   void BlockProfile(){if(blockedProfile!=null||lobby==null)return;blockedProfile=lobby;savedProfileTouchable=NativeUI.Bool(lobby,"touchable");NativeUI.Set(lobby,"touchable",false);}
   void ReleaseModal(){if(shield!=null){try{NativeUI.Call(shield,"Dispose");}catch{}shield=shieldPaint=null;shieldWidth=shieldHeight=0;shieldOrder=int.MinValue;}if(blockedProfile!=null){try{if(!NativeUI.Bool(blockedProfile,"isDisposed"))NativeUI.Set(blockedProfile,"touchable",savedProfileTouchable);}catch{}blockedProfile=null;}}
   void Fit(){
@@ -265,7 +268,42 @@ namespace AstralPersonalMod {
    if(shield==null){shield=Component(root,0,0,rw,rh);NativeUI.Set(shield,"opaque",true);NativeUI.Set(shield,"name","astral_personal_input_shield");shieldPaint=NativeUI.New("FairyGUI.GGraph");NativeUI.Set(shieldPaint,"touchable",false);NativeUI.Call(shield,"AddChild",shieldPaint);}
    int order=(int)NativeUI.Long(window,"sortingOrder");int targetOrder=Math.Max(0,order-1);if(shieldOrder!=targetOrder){NativeUI.Set(shield,"sortingOrder",targetOrder);shieldOrder=targetOrder;}
    if(Math.Abs(rw-shieldWidth)>.1f||Math.Abs(rh-shieldHeight)>.1f){NativeUI.Call(shield,"SetSize",rw,rh);NativeUI.Call(shieldPaint,"SetSize",rw,rh);NativeUI.Call(shieldPaint,"DrawRect",rw,rh,0,new Color(0,0,0,0),new Color(.14f,.05f,.25f,.84f));shieldWidth=rw;shieldHeight=rh;}
-   var bounds=StatsLayout.Fit(rw,rh);if(placement.Changed(rw,rh,bounds)){try{NativeUI.Call(window,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(window,"SetXY",bounds.X,bounds.Y);RuntimeDiagnostics.Event("window_refit");}catch{placement.Invalidate();throw;}}
+   var bounds=StatsLayout.Fit(rw,rh);FitCaptureChrome(root,bounds,rw);if(placement.Changed(rw,rh,bounds)){try{NativeUI.Call(window,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(window,"SetXY",bounds.X,bounds.Y);RuntimeDiagnostics.Event("window_refit");}catch{placement.Invalidate();throw;}}
+  }
+  void DisposeCaptureChrome(){
+   captureImage=null;captureFrame=-1;toastUntil=0;capturePlacement.Invalidate();
+   if(cameraButton!=null){var pointer=cameraButton.Pointer;clicks.Remove(pointer);paints.Remove(pointer);if(hover==pointer)hover=IntPtr.Zero;if(pressed==pointer)pressed=IntPtr.Zero;try{if(!NativeUI.Bool(cameraButton,"isDisposed"))NativeUI.Call(cameraButton,"Dispose");}catch{}}
+   if(captureToast!=null)try{if(!NativeUI.Bool(captureToast,"isDisposed"))NativeUI.Call(captureToast,"Dispose");}catch{}
+   cameraButton=captureToast=captureToastText=null;
+  }
+  void FitCaptureChrome(IObject root,ModalBounds bounds,float rootWidth){
+   if(cameraButton==null||NativeUI.Bool(cameraButton,"isDisposed")){
+    capturePlacement.Invalidate();cameraButton=NewButton(root,"","CaptureStats",0,0,40,40);NativeUI.Set(cameraButton,"name","astral_stats_capture");NativeUI.Set(cameraButton,"tooltips","전적창 캡처");
+    Round(cameraButton,8,14,24,17,ink,4);Round(cameraButton,13,9,11,7,ink,2);Round(cameraButton,15,17,10,10,Color.white,5);
+   }
+   if(captureToast==null||NativeUI.Bool(captureToast,"isDisposed")){
+    capturePlacement.Invalidate();captureToast=Component(root,0,0,360,40);NativeUI.Set(captureToast,"touchable",false);Round(captureToast,0,0,360,40,lavender,12);captureToastText=Label(captureToast,"",12,8,336,26,17);var format=NativeUI.Get(captureToastText,"textFormat");NativeUI.Set(format,"align",1);NativeUI.Set(captureToastText,"textFormat",format);
+   }
+   int order=(int)NativeUI.Long(window,"sortingOrder");if(NativeUI.Long(cameraButton,"sortingOrder")!=order+1)NativeUI.Set(cameraButton,"sortingOrder",order+1);if(NativeUI.Long(captureToast,"sortingOrder")!=order+2)NativeUI.Set(captureToast,"sortingOrder",order+2);
+   if(capturePlacement.Changed(rootWidth,NativeUI.Float(root,"height"),bounds)){
+   NativeUI.Call(cameraButton,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(cameraButton,"SetXY",Math.Max(4,bounds.X-48*bounds.Scale),Math.Max(4,bounds.Y+8*bounds.Scale));
+   NativeUI.Call(captureToast,"SetScale",bounds.Scale,bounds.Scale);NativeUI.Call(captureToast,"SetXY",Math.Max(4,Math.Min(rootWidth-360*bounds.Scale-4,bounds.X+(bounds.Width-360*bounds.Scale)/2)),Math.Max(4,bounds.Y-48*bounds.Scale));
+   }
+   bool cameraVisible=captureFrame<0,toastVisible=toastUntil>Time.realtimeSinceStartup&&captureFrame<0;if(NativeUI.Bool(cameraButton,"visible")!=cameraVisible)NativeUI.Set(cameraButton,"visible",cameraVisible);if(NativeUI.Bool(captureToast,"visible")!=toastVisible)NativeUI.Set(captureToast,"visible",toastVisible);
+  }
+  public void CaptureStats(){
+   if(!open||captureFrame>=0)return;CloseDropdown();captureImage=null;toastUntil=0;captureFrame=Time.frameCount+2;captureDeadline=Time.realtimeSinceStartup+1.5f;nextClipboardTry=0;
+   if(cameraButton!=null)NativeUI.Set(cameraButton,"visible",false);if(captureToast!=null)NativeUI.Set(captureToast,"visible",false);
+  }
+  void CaptureNotice(string message){captureImage=null;captureFrame=-1;NativeUI.Set(captureToastText,"text",message);toastUntil=Time.realtimeSinceStartup+1.8f;if(cameraButton!=null)NativeUI.Set(cameraButton,"visible",true);NativeUI.Set(captureToast,"visible",true);}
+  void UpdateCapture(float now){
+   if(toastUntil>0&&now>=toastUntil){toastUntil=0;if(captureToast!=null)NativeUI.Set(captureToast,"visible",false);}
+   if(captureFrame<0||Time.frameCount<captureFrame||now<nextClipboardTry)return;
+   try{
+    if(captureImage==null){var root=NativeUI.Static("FairyGUI.GRoot","inst");captureImage=ScreenshotClipboard.Capture(NativeUI.Float(root,"width"),NativeUI.Float(root,"height"),NativeUI.Float(window,"x"),NativeUI.Float(window,"y"),W*NativeUI.Float(window,"scaleX"),H*NativeUI.Float(window,"scaleY"));}
+    if(ScreenshotClipboard.TryCopy(captureImage)){RuntimeDiagnostics.Event("stats_copied_to_clipboard");CaptureNotice("클립보드에 캡처되었습니다");}
+    else if(now>=captureDeadline)CaptureNotice("클립보드를 사용할 수 없습니다");else nextClipboardTry=now+.1f;
+   }catch(Exception error){RuntimeDiagnostics.Error("stats.capture",error);CaptureNotice("전적창을 캡처하지 못했습니다");}
   }
   void ReadCollectionStatus(){
    if(collectionLabel==null)return;string label="수집 준비 중",kind="waiting";
