@@ -1,7 +1,6 @@
 """Personal-only replay analysis and SQLite index. Does not store other players' profiles."""
 import json,pathlib,struct,time
 import astral_replay as replay
-from astral_protobuf import varint
 import astral_card_stats as cards
 import astral_chip_stats as chips
 import astral_combat_dice as dice
@@ -36,6 +35,19 @@ def init(db):
  ''');db.commit()
 def signed32(x):return x-2**32 if x>=2**31 else x
 
+def fixed64_target_ids(values):
+ # UseEffectCardS2C uses FieldCodec.ForSFixed64, including its packed representation.
+ result=[]
+ for value in values:
+  if type(value) is int:
+   result.append(value-2**64 if value>=2**63 else value)
+  elif isinstance(value,bytes):
+   if len(value)%8:raise ValueError('Invalid packed sfixed64 target IDs')
+   result.extend(struct.unpack('<'+'q'*(len(value)//8),value))
+  else:raise ValueError('Unsupported target ID representation')
+ return list(dict.fromkeys(value for value in result if value>0))
+
+
 def gold_transfers(data,players,include_skills=True):
  # Explicit declaration + attributable debit/credit. Amounts need not be equal.
  from collections import deque
@@ -53,14 +65,6 @@ def gold_transfers(data,players,include_skills=True):
    if replay.first(value,1)!=pid:return None
    values.append(signed32(replay.first(value,4))-signed32(replay.first(value,3)))
   return values[0] if len(values)==1 else None
- def targets(values):
-  result=[]
-  for value in values:
-   if isinstance(value,int):result.append(value)
-   elif isinstance(value,bytes):
-    offset=0
-    while offset<len(value):number,offset=varint(value,offset);result.append(number)
-  return list(dict.fromkeys(v for v in result if v>0))
  while pos<len(data):
   op,n=struct.unpack_from('>HI',data,pos);pos+=6;raw=data[pos:pos+n];pos+=n;frame+=1
   if op==1015:roundno=replay.first(replay.protobuf(raw),1)
@@ -75,7 +79,7 @@ def gold_transfers(data,players,include_skills=True):
    recipient=replay.first(f,3);cause_type=14;source='shop'
    if f.get(2):continue
   else:
-   selected=targets(f.get(3,[]));skill=replay.first(f,9)
+   selected=fixed64_target_ids(f.get(3,[]));skill=replay.first(f,9)
    if not replay.first(f,8) or not skill or len(selected)!=1:continue
    recipient=selected[0];cause_type=1;source='skill'
   if sender==recipient or sender not in players or recipient not in players:continue
@@ -167,15 +171,6 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None,purchases=None):
  transfer_frames.update({t['credit_frame']:{'direction':'received','counterpart':t['sender'],'amount':t['amount'],'received':t.get('received',t['amount']),'source':t.get('source','shop')} for t in transfers if t['recipient']==owner})
  events=[];stats=dict(turns=0,deaths=0,npc_last_hits=0,effect_cards=0,battle_cards=0,skills=0)
  pos=frame=roundno=0;actor=0;level=None;star_level=None;known_cards={};battle_id=0;opponent=0;battle_bonuses={};lethal_hits={}
- def target_ids(values):
-  result=[]
-  for value in values:
-   if isinstance(value,int):result.append(value)
-   elif isinstance(value,bytes):
-    offset=0
-    while offset<len(value):
-     number,offset=varint(value,offset);result.append(number)
-  return list(dict.fromkeys(v for v in result if v>0))
  def remember_cards(raw_cards):
   for raw in raw_cards:
    card=replay.protobuf(raw);uid,definition=replay.first(card,1),replay.first(card,2)
@@ -213,8 +208,8 @@ def analyze(data,summary,owner,transfers=None,kill_rewards=None,purchases=None):
      add('성장 상태',{'previous':level,'current':current,'snapshot_round':replay.first(room,14),'note':'게임 내부 성장 값; 스냅샷에서 확인한 시점'});level=current
   elif op==1109 and replay.first(f,2)==owner:remember_cards(f.get(1,[]))
   elif op==5056 and pid==owner:
-   if replay.first(f,8):stats['skills']+=1;add('스킬',{'skill_id':replay.first(f,9),'targets':target_ids(f.get(3,[]))})
-   if replay.first(f,2) and not replay.first(f,8):stats['effect_cards']+=1;add('효과 카드',{'card_id':replay.first(f,2),'definition_id':replay.first(f,2),'targets':target_ids(f.get(3,[]))})
+   if replay.first(f,8):stats['skills']+=1;add('스킬',{'skill_id':replay.first(f,9),'targets':fixed64_target_ids(f.get(3,[]))})
+   if replay.first(f,2) and not replay.first(f,8):stats['effect_cards']+=1;add('효과 카드',{'card_id':replay.first(f,2),'definition_id':replay.first(f,2),'targets':fixed64_target_ids(f.get(3,[]))})
   elif op==5036 and pid==owner and replay.first(f,2) and not replay.first(f,3):
    stats['battle_cards']+=1;add('전투 카드',{'card_id':replay.first(f,2),'definition_id':known_cards.get(replay.first(f,2)),'battle_id':battle_id,'opponent_id':opponent})
   elif op==1115:
@@ -422,7 +417,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=17
+INSIGHTS_VERSION=18
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
