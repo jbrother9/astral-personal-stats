@@ -62,12 +62,18 @@ namespace AstralPersonalMod {
    }finally{if(memory!=IntPtr.Zero&&previous!=IntPtr.Zero&&previous!=new IntPtr(-1))SelectObject(memory,previous);if(bitmap!=IntPtr.Zero)DeleteObject(bitmap);if(memory!=IntPtr.Zero)DeleteDC(memory);if(screen!=IntPtr.Zero)ReleaseDC(IntPtr.Zero,screen);}
   }
   internal static bool TryCopy(byte[] dib){
-   var owner=ActiveGame();if(dib==null||dib.Length<=40)throw new ArgumentException("Empty screenshot");
-   var handle=GlobalAlloc(2,(UIntPtr)(uint)dib.Length);if(handle==IntPtr.Zero)throw new OutOfMemoryException();bool opened=false;
+   if(dib==null||dib.Length<=40)throw new ArgumentException("Empty screenshot");return TryCopyData(dib,8);
+  }
+  internal static bool TryCopyText(string text){
+   if(string.IsNullOrEmpty(text)||text.Length>128||text.IndexOf('\0')>=0)throw new ArgumentException("Invalid clipboard text");
+   return TryCopyData(System.Text.Encoding.Unicode.GetBytes(text+"\0"),13);
+  }
+  static bool TryCopyData(byte[] data,uint format){
+   var owner=ActiveGame();var handle=GlobalAlloc(2,(UIntPtr)(uint)data.Length);if(handle==IntPtr.Zero)throw new OutOfMemoryException();bool opened=false;
    try{
-    var pointer=GlobalLock(handle);if(pointer==IntPtr.Zero)throw new InvalidOperationException("Clipboard memory unavailable");try{Marshal.Copy(dib,0,pointer,dib.Length);}finally{GlobalUnlock(handle);}
+    var pointer=GlobalLock(handle);if(pointer==IntPtr.Zero)throw new InvalidOperationException("Clipboard memory unavailable");try{Marshal.Copy(data,0,pointer,data.Length);}finally{GlobalUnlock(handle);}
     if(!OpenClipboard(owner))return false;opened=true;if(!EmptyClipboard())throw new InvalidOperationException("Clipboard unavailable");
-    if(SetClipboardData(8,handle)==IntPtr.Zero)throw new InvalidOperationException("Clipboard image rejected");handle=IntPtr.Zero;return true;
+    if(SetClipboardData(format,handle)==IntPtr.Zero)throw new InvalidOperationException("Clipboard data rejected");handle=IntPtr.Zero;return true;
    }finally{if(opened)CloseClipboard();if(handle!=IntPtr.Zero)GlobalFree(handle);}
   }
  }

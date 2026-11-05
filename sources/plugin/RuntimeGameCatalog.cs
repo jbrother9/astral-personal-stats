@@ -6,6 +6,7 @@ using UnityEngine;
 using IObject=Il2CppSystem.Object;
 namespace AstralPersonalMod {
  internal sealed class RuntimeGameCatalog {
+  readonly RuntimeLandLayouts landLayouts=new RuntimeLandLayouts();
   internal static long Generation{get;private set;}
   static int revision;int seenRevision;
   internal static void Invalidate(){revision++;}
@@ -13,7 +14,7 @@ namespace AstralPersonalMod {
   internal static int PortraitGroup(int hero){return portraits.TryGetValue(hero,out int group)&&group>0?group:hero;}
   sealed class Entry {public int id{get;set;}public int name_key{get;set;}public string name{get;set;}public int rarity{get;set;}public int portrait_group{get;set;}}
   sealed class Spec {internal string Category,Config,Localization,Id,Name,List;internal bool Rarity,Portrait,Optional;internal Spec(string category,string config,string local,string id="Id",string name="NameID",bool rarity=false,bool portrait=false,string list="Infos",bool optional=false){List=list;Category=category;Config=config;Localization=local;Id=id;Name=name;Rarity=rarity;Portrait=portrait;Optional=optional;}}
-  static readonly Spec[] specs={new Spec("cards","Card","STRCard"),new Spec("characters","Character","STRCharacter",portrait:true),new Spec("monsters","Monster","STRMonster",portrait:true),new Spec("maps","Map","STRMap",name:"MapName"),new Spec("chips","Relic","STRRelic",rarity:true),new Spec("modes","GameMode","STRGameMode",id:"MapModeType"),new Spec("difficulties","ChoosingTimeLimit","STRChoosingTimeLimit",id:"GameDifficultyType",name:"DescriptionID",list:"Difficultys"),new Spec("buffs","Buff","STRBuff",name:"NameId",optional:true),new Spec("skills","Skill","STRSkill",optional:true)};
+  static readonly Spec[] specs={new Spec("cards","Card","STRCard"),new Spec("characters","Character","STRCharacter",portrait:true),new Spec("monsters","Monster","STRMonster",portrait:true),new Spec("maps","Map","STRMap",name:"MapName"),new Spec("chips","Relic","STRRelic",rarity:true),new Spec("modes","GameMode","STRGameMode",id:"MapModeType"),new Spec("difficulties","ChoosingTimeLimit","STRChoosingTimeLimit",id:"GameDifficultyType",name:"DescriptionID",list:"Difficultys"),new Spec("buffs","Buff","STRBuff",name:"NameId",optional:true),new Spec("skills","Skill","STRSkill",optional:true),new Spec("lands","Land","STRLand",id:"LandType",optional:true),new Spec("events","Event","STREvent",optional:true),new Spec("buildings","Build","STRBuild",optional:true)};
   sealed class Source {internal Spec Spec;internal IObject Infos,Locals;internal int Count;}
   List<Source> sources;Dictionary<string,List<Entry>> output;HashSet<int> ids;int sourceIndex,rowIndex,language;float next;string activeStamp,lastStamp,lastContent;
   string Capture(out List<Source> captured,out int lang){
@@ -22,7 +23,8 @@ namespace AstralPersonalMod {
    var skin=NativeUI.Static("StaticConfigure","Skin");stamp+="/skin:"+(skin==null?IntPtr.Zero:skin.Pointer);return stamp;
   }
   internal void Update(){
-   float now=Time.realtimeSinceStartup;if(seenRevision!=revision){seenRevision=revision;Reset(0);}if(now<next||ProfileStatsUI.AccountId<=0)return;
+   float now=Time.realtimeSinceStartup;if(seenRevision!=revision){seenRevision=revision;landLayouts.Invalidate();Reset(0);}
+   landLayouts.Update();if(now<next||ProfileStatsUI.AccountId<=0)return;
    try{
     if(sources==null){string stamp=Capture(out var captured,out int lang);if(stamp==lastStamp){next=now+5;return;}sources=captured;language=lang;activeStamp=stamp;sourceIndex=rowIndex=0;ids=new HashSet<int>();output=new Dictionary<string,List<Entry>>();foreach(var spec in specs)output[spec.Category]=new List<Entry>();}
     for(int batch=0;batch<12&&sourceIndex<sources.Count;batch++){

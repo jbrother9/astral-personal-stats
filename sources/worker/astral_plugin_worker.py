@@ -1,5 +1,5 @@
 """Background worker for the in-game plugin. No capture, Steam login or admin required."""
-import argparse,contextlib,datetime,json,os,pathlib,sqlite3,struct,sys,time,urllib.error,traceback
+import argparse,contextlib,datetime,hashlib,json,os,pathlib,sqlite3,struct,sys,time,urllib.error,traceback
 import astral_worker_storage as collector
 import astral_paths as paths
 import astral_personal_data as personal
@@ -25,7 +25,7 @@ def init(store):
  store.db.execute('''CREATE TABLE IF NOT EXISTS plugin_requests(
  replay_id TEXT NOT NULL,owner_id INTEGER NOT NULL,room_id INTEGER NOT NULL,start_time INTEGER NOT NULL,
  reason TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_try REAL NOT NULL DEFAULT 0,error TEXT,
- PRIMARY KEY(replay_id,owner_id))''');store.db.commit()
+ PRIMARY KEY(replay_id,owner_id))''');store.db.execute('CREATE TABLE IF NOT EXISTS plugin_land_layout_revisions(owner_id INTEGER NOT NULL,map_id INTEGER NOT NULL,signature TEXT NOT NULL,PRIMARY KEY(owner_id,map_id))');store.db.commit()
 
 def accept(store,obj):
  obj=request_value(obj);rid,owner=obj['replay_id'],obj['owner_id']
@@ -93,6 +93,31 @@ def process_one(store,downloader=None,status=None):
  return True
 
 
+def refresh_land_layouts(store,state):
+ if not state or state.get('owner_verified') is not True:return False
+ owner=state.get('owner_id')
+ if type(owner) is not int or owner<=0:return False
+ path=store.root/'plugin-land-layouts.json'
+ try:
+  stat=path.stat();stamp=(owner,stat.st_mtime_ns,stat.st_size)
+ except OSError:return False
+ if getattr(store,'_land_layout_seen',None)==stamp:return False
+ store._land_layout_seen=stamp
+ grouped={}
+ for layout in personal.game_catalog.land_layouts(store.db):grouped.setdefault(layout['map_id'],[]).append(layout)
+ changed=False
+ for map_id,layouts in grouped.items():
+  signature=hashlib.sha256(json.dumps(sorted(layouts,key=lambda v:v['map_data_id']),sort_keys=True).encode()).hexdigest()
+  previous=store.db.execute('SELECT signature FROM plugin_land_layout_revisions WHERE owner_id=? AND map_id=?',(owner,map_id)).fetchone()
+  if previous and previous[0]==signature:continue
+  with store.db:
+   # Keep old insights readable until the usual bounded backfill replaces them.
+   store.db.execute('UPDATE personal_match_insights SET version=MIN(version,7) WHERE owner_id=? AND replay_id IN (SELECT replay_id FROM personal_matches WHERE owner_id=? AND map_id=?)',(owner,owner,map_id))
+   store.db.execute('INSERT OR REPLACE INTO plugin_land_layout_revisions VALUES (?,?,?)',(owner,map_id,signature))
+  changed=True
+ return changed
+
+
 def backfill_card_cache(store,state,status=None):
  if not state or state.get('owner_verified') is not True:return False
  owner=state.get('owner_id');rows=store.db.execute('SELECT m.replay_id FROM personal_matches m LEFT JOIN personal_card_stats c ON c.replay_id=m.replay_id AND c.owner_id=m.owner_id WHERE m.owner_id=? AND (c.version IS NULL OR c.version<? OR m.analysis_version<? OR NOT EXISTS (SELECT 1 FROM personal_appearances a WHERE a.replay_id=m.replay_id AND a.owner_id=m.owner_id) OR NOT EXISTS (SELECT 1 FROM personal_match_insights i WHERE i.replay_id=m.replay_id AND i.owner_id=m.owner_id AND i.version>=?)) ORDER BY m.finished_at DESC',(owner,cards.VERSION,personal.VERSION,personal.INSIGHTS_VERSION)).fetchall()
@@ -139,7 +164,7 @@ def run(data_dir,once=False,idle_seconds=180,stop_event=None,parent_pid=None):
     def report(phase=None,rid=None,job_owner=None):
      try:return collection_status.publish(store,state,phase,rid,job_owner)
      except (OSError,sqlite3.Error):return False
-    consume_inbox(store);report();active=process_one(store,status=report)
+    consume_inbox(store);refresh_land_layouts(store,state);report();active=process_one(store,status=report)
     if not active:
      try:active=backfill_card_cache(store,state,status=report)
      except (OSError,ValueError,IndexError,struct.error):collector.say('Card cache backfill skipped an unreadable replay.')
