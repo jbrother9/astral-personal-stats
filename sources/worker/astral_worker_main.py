@@ -1,6 +1,6 @@
 """Standalone plugin worker and offline diagnostics entry point."""
 import argparse,json,pathlib,sys,os
-VERSION='0.8.11'
+VERSION='0.8.34'
 
 def self_test(base=None):
  import tempfile,struct,ssl
@@ -19,23 +19,26 @@ def self_test(base=None):
   def blob(k,b):return var(k*8+2)+var(len(b))+b
   def frame(op,b):return struct.pack('>HI',op,len(b))+b
   owner=900001;room=1234;started=1800000000;rid=str(started*1000000+room)
-  hero=value(1,owner)+value(2,127)+blob(8,value(1,4)+value(2,10003))+blob(8,value(1,5)+value(2,21001))
+  assert personal.fixed64_target_ids([struct.pack('<qq',owner,owner+1)])==[owner,owner+1]
+  hero=value(1,owner)+value(2,127)+value(23,10)+blob(8,value(1,4)+value(2,10003))+blob(8,value(1,5)+value(2,21001))
   player=value(1,owner)+blob(2,b'Fixture')+blob(10,hero)
   room_data=value(1,room)+value(5,82008)+blob(9,player)+value(30,started)+value(36,4)
   hp=value(1,900002)+blob(3,value(1,900002)+value(3,10)+value(4,7)+value(8,2)+value(9,owner))
-  data=frame(1003,blob(1,room_data))+frame(5028,value(1,owner)+blob(2,struct.pack('<2I',1,2)))+frame(5038,value(1,owner)+value(2,6))+frame(5212,value(1,owner)+value(2,50001))+frame(5036,value(1,owner)+value(2,4))+frame(5056,value(1,owner)+value(2,21001))+frame(1040,blob(4,hp))+frame(1016,value(1,room)+value(3,started+90)+blob(11,rid.encode())+blob(12,b'fixture')+value(13,4)+blob(7,value(1,owner)+blob(2,value(3,3)+value(14,2)))+blob(14,value(1,owner)+value(2,1)))
+  data=frame(1003,blob(1,room_data))+frame(5028,value(1,owner)+blob(2,struct.pack('<2I',1,2)))+frame(5038,value(1,owner)+value(2,6))+frame(5212,value(1,owner)+value(2,50001))+frame(5036,value(1,owner)+value(2,4))+frame(5056,value(1,owner)+value(2,21001)+blob(3,struct.pack('<q',owner)))+frame(1040,blob(4,hp)+blob(4,value(1,owner)+blob(3,value(1,owner)+value(3,5)+value(4,6)+value(7,11))))+frame(1016,value(1,room)+value(3,started+90)+blob(11,rid.encode())+blob(12,b'fixture')+value(13,4)+blob(7,value(1,owner)+blob(2,value(3,3)+value(14,2)))+blob(14,value(1,owner)+value(2,1)))
   store=storage.Store(root,owner)
   try:
    worker.init(store);worker.accept(store,{'schema':1,'source':'astral-personal-mod','owner_id':owner,'room_id':room,'start_time':started,'replay_id':rid,'reason':'history'})
    assert worker.process_one(store,lambda _:data)
    summary=replay.parse_replay(data,rid);totals=personal.game_totals(store.db,rid,owner)
+   insight=personal.match_insights(store.db,rid,owner);effect=next(e for e in insight['participants'][0]['timeline'] if e['kind']=='효과 카드');assert effect['targets']==[{'id':owner,'entity':{'kind':'player','hero_id':127}}]
    assert totals['movement_distance']==2 and totals['damage_dealt']==3
+   hp_detail=overlay.metric_detail(store.db,owner,rid,owner,overlay.METRIC_KEYS.index('hp_increase'));assert any('HP 5/10 → 6/11 (+1)' in row[1] for row in hp_detail['rows'])
    snap=overlay.make_snapshot(store.db,owner,tab=3);assert snap['total_rows']==1 and snap['details'][0]['participants'][0]['own']
    from astral_combat_dice import aggregate
    assert aggregate(store.db,owner)['attack']['average']=='6.00'
    assert not any(name in sys.modules for name in ('astral_account_query','astral_npcap','astral_collector'))
   finally:store.close()
- return {'ok':True,'version':VERSION,'frozen':bool(getattr(sys,'frozen',False)),'checks':['verified_https_context','sqlite','replay_analysis','card_chip_dice','worker_queue','overlay','no_capture_or_login_modules']}
+ return {'ok':True,'version':VERSION,'frozen':bool(getattr(sys,'frozen',False)),'checks':['hp_current_and_maximum','sfixed64_targets','verified_https_context','sqlite','replay_analysis','card_chip_dice','worker_queue','overlay','no_capture_or_login_modules']}
 
 def main():
  if '--version' in sys.argv:print(VERSION);return

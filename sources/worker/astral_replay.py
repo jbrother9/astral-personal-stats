@@ -25,7 +25,7 @@ def finish_info(payload,strict=True):
   if not pid or not isinstance(raw_value,bytes):continue
   v=protobuf(raw_value)
   # A present protobuf message omits scalar zero values; absent messages remain unknown.
-  fields={'damage_dealt':3,'damage_taken':6,'deaths':5,'movement_distance':14,'transferred_gold':10,'max_battle_damage':12}
+  fields={'damage_dealt':3,'damage_taken':6,'deaths':5,'movement_distance':14,'transferred_gold':10,'max_battle_damage':12,'gold_acquired':9}
   values={key:first(v,field) for key,field in fields.items()}
   if any(type(n) is not int or n<0 or n>=2**63 for n in values.values()):raise ValueError('Invalid settlement statistic')
   settlement[str(pid)]=values
@@ -45,7 +45,9 @@ def parse_replay(data,expected_id=None):
     room_info.update(difficulty=first(room,48),map_difficulty_id=first(room,63),room_id=first(room,1),map_id=first(room,5),map_type=first(room,36),start_time=first(room,30))
     for raw_player in room.get(9,[]):
      p=protobuf(raw_player);pid=first(p,1);hero=protobuf(first(p,10,b''))
-     if pid:players[pid]={'player_id':pid,'name':text(first(p,2,b'')),'slot':first(p,6),'account_level':first(p,25),'hero_id':first(hero,2),'level':first(hero,33),'gold':first(hero,7),'hp':first(hero,14),'standing_painting_id':players.get(pid,{}).get('standing_painting_id') or first(hero,46),'equipped_hero_id':players.get(pid,{}).get('equipped_hero_id') if players.get(pid,{}).get('standing_painting_id') else first(hero,2)}
+     # A player-only snapshot can omit Hero entirely. Absence is not a new
+     # character ID of zero; preserve the last observed identity in that case.
+     if pid:players[pid]={'player_id':pid,'name':text(first(p,2,b'')),'slot':first(p,6),'account_level':first(p,25),'hero_id':first(hero,2) if 10 in p else players.get(pid,{}).get('hero_id',0),'level':first(hero,33),'gold':first(hero,7),'hp':first(hero,14),'standing_painting_id':players.get(pid,{}).get('standing_painting_id') or first(hero,46),'equipped_hero_id':players.get(pid,{}).get('equipped_hero_id') if players.get(pid,{}).get('standing_painting_id') else first(hero,2)}
   elif op==1016:finish=finish_info(payload)
   elif op==1040:
    for raw in protobuf(payload).get(4,[]):

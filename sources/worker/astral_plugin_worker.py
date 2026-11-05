@@ -1,5 +1,5 @@
 """Background worker for the in-game plugin. No capture, Steam login or admin required."""
-import argparse,contextlib,datetime,json,os,pathlib,sqlite3,struct,sys,time,urllib.error,traceback
+import argparse,contextlib,datetime,hashlib,json,os,pathlib,sqlite3,struct,sys,time,urllib.error,traceback
 import astral_worker_storage as collector
 import astral_paths as paths
 import astral_personal_data as personal
@@ -25,7 +25,7 @@ def init(store):
  store.db.execute('''CREATE TABLE IF NOT EXISTS plugin_requests(
  replay_id TEXT NOT NULL,owner_id INTEGER NOT NULL,room_id INTEGER NOT NULL,start_time INTEGER NOT NULL,
  reason TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_try REAL NOT NULL DEFAULT 0,error TEXT,
- PRIMARY KEY(replay_id,owner_id))''');store.db.commit()
+ PRIMARY KEY(replay_id,owner_id))''');store.db.execute('CREATE TABLE IF NOT EXISTS plugin_land_layout_revisions(owner_id INTEGER NOT NULL,map_id INTEGER NOT NULL,signature TEXT NOT NULL,PRIMARY KEY(owner_id,map_id))');store.db.commit()
 
 def accept(store,obj):
  obj=request_value(obj);rid,owner=obj['replay_id'],obj['owner_id']
@@ -49,6 +49,12 @@ def consume_inbox(store):
    collector.say('Invalid plugin request retained with .invalid suffix: '+file.name)
    try:file.rename(file.with_suffix('.invalid'))
    except OSError:pass
+
+
+def notify_data_changed(store,owner):
+ # Written only after analysis commits; contains no replay or account credentials.
+ target=store.root/'plugin-data-revision.json';tmp=target.with_suffix('.part')
+ tmp.write_text(json.dumps({'schema':1,'owner_id':owner,'revision':time.time_ns()}),encoding='utf8');tmp.replace(target)
 
 
 def process_one(store,downloader=None,status=None):
@@ -76,6 +82,7 @@ def process_one(store,downloader=None,status=None):
   if owner not in [p['player_id'] for p in summary['participants']]:raise ValueError('Current account is not a replay participant')
   stage='save_and_analyze';store.owner_id=owner;store.enqueue(rid);store.save(data,summary,True)
   with store.db:store.db.execute("UPDATE plugin_requests SET status='complete',error=NULL WHERE replay_id=? AND owner_id=?",(rid,owner))
+  notify_data_changed(store,owner)
   collector.say('Replay saved / frames='+str(summary['frame_count'])+' / elapsed_ms='+str(round((time.perf_counter()-started)*1000)))
  except (OSError,ValueError,IndexError,TypeError,struct.error) as error:
   attempts+=1;delay=(5,15,60,180,600)[min(attempts-1,4)];status='failed' if attempts>=5 else 'pending'
@@ -84,6 +91,31 @@ def process_one(store,downloader=None,status=None):
   trace=' > '.join(pathlib.Path(f.filename).name+':'+str(f.lineno)+':'+f.name for f in traceback.extract_tb(error.__traceback__)[-6:])
   collector.say('Retry / stage='+stage+' / error='+safe+' / errno='+str(getattr(error,'errno',None))+' / attempt='+str(attempts)+' / wait_seconds='+str(delay)+' / status='+status+' / trace='+trace)
  return True
+
+
+def refresh_land_layouts(store,state):
+ if not state or state.get('owner_verified') is not True:return False
+ owner=state.get('owner_id')
+ if type(owner) is not int or owner<=0:return False
+ path=store.root/'plugin-land-layouts.json'
+ try:
+  stat=path.stat();stamp=(owner,stat.st_mtime_ns,stat.st_size)
+ except OSError:return False
+ if getattr(store,'_land_layout_seen',None)==stamp:return False
+ store._land_layout_seen=stamp
+ grouped={}
+ for layout in personal.game_catalog.land_layouts(store.db):grouped.setdefault(layout['map_id'],[]).append(layout)
+ changed=False
+ for map_id,layouts in grouped.items():
+  signature=hashlib.sha256(json.dumps(sorted(layouts,key=lambda v:v['map_data_id']),sort_keys=True).encode()).hexdigest()
+  previous=store.db.execute('SELECT signature FROM plugin_land_layout_revisions WHERE owner_id=? AND map_id=?',(owner,map_id)).fetchone()
+  if previous and previous[0]==signature:continue
+  with store.db:
+   # Keep old insights readable until the usual bounded backfill replaces them.
+   store.db.execute('UPDATE personal_match_insights SET version=MIN(version,7) WHERE owner_id=? AND replay_id IN (SELECT replay_id FROM personal_matches WHERE owner_id=? AND map_id=?)',(owner,owner,map_id))
+   store.db.execute('INSERT OR REPLACE INTO plugin_land_layout_revisions VALUES (?,?,?)',(owner,map_id,signature))
+  changed=True
+ return changed
 
 
 def backfill_card_cache(store,state,status=None):
@@ -96,6 +128,7 @@ def backfill_card_cache(store,state,status=None):
   data=file.read_bytes();summary=replay.parse_replay(data,rid)
   if owner not in [p['player_id'] for p in summary['participants']]:continue
   personal.index(store.db,data,summary,owner)
+  notify_data_changed(store,owner)
   return True
  return False
 
@@ -111,11 +144,19 @@ def heartbeat(store):
   return state
  except (OSError,ValueError):return None
 
+def publish_ui_if_requested(store,state,last_signature):
+ try:
+  info=(store.root/'plugin-ui-request.json').stat();signature=(info.st_mtime_ns,info.st_size)
+  if signature!=last_signature and overlay.publish(store,state):return signature
+ except OSError:pass
+ return last_signature
+
+
 def run(data_dir,once=False,idle_seconds=180,stop_event=None,parent_pid=None):
  store=collector.Store(data_dir);init(store)
  try:
   with collector.WatchLock(store.root/'plugin-worker.lock'):
-   collector.say('Plugin worker started. No packet capture.');last_seen=time.monotonic();last_cleanup=0;last_ui=0
+   collector.say('Plugin worker started. No packet capture.');last_seen=time.monotonic();last_cleanup=0;last_ui_signature=None
    while True:
     if stop_event is not None and stop_event.is_set():collector.say('Game process ended; pending requests retained for next launch.');break
     state=heartbeat(store)
@@ -123,14 +164,13 @@ def run(data_dir,once=False,idle_seconds=180,stop_event=None,parent_pid=None):
     def report(phase=None,rid=None,job_owner=None):
      try:return collection_status.publish(store,state,phase,rid,job_owner)
      except (OSError,sqlite3.Error):return False
-    consume_inbox(store);report();active=process_one(store,status=report)
+    consume_inbox(store);refresh_land_layouts(store,state);report();active=process_one(store,status=report)
     if not active:
      try:active=backfill_card_cache(store,state,status=report)
      except (OSError,ValueError,IndexError,struct.error):collector.say('Card cache backfill skipped an unreadable replay.')
     report()
     if active:last_seen=time.monotonic()
-    if time.monotonic()-last_ui>3:
-     overlay.publish(store,state);last_ui=time.monotonic()
+    last_ui_signature=publish_ui_if_requested(store,state,last_ui_signature)
     if time.monotonic()-last_cleanup>60:
      prefs=personal.settings()
      if prefs['cache_enabled']:personal.cleanup(store.db,store.root,int(prefs['cache_days']))

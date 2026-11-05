@@ -3,6 +3,7 @@ import json,pathlib,time,sqlite3
 import astral_paths as paths
 ROOT=pathlib.Path(__file__).resolve().parent
 CATEGORIES=('cards','characters','monsters','maps','chips','modes')
+OPTIONAL_CATEGORIES=('difficulties','buffs','skills','lands','events','buildings')
 _cache={};_reported=set()
 
 def data_root(db=None):
@@ -24,8 +25,8 @@ def load(db=None):
   if value.get('schema')!=1 or value.get('source')!='live_game_configuration' or value.get('complete') is not True:return None
   catalogs=value.get('catalogs');result={}
   if not isinstance(catalogs,dict):return None
-  for category in CATEGORIES+('difficulties',):
-   rows=catalogs.get(category,[]) if category=='difficulties' else catalogs.get(category)
+  for category in CATEGORIES+OPTIONAL_CATEGORIES:
+   rows=catalogs.get(category,[]) if category in OPTIONAL_CATEGORIES else catalogs.get(category)
    if not isinstance(rows,list) or len(rows)>20000:return None
    entries={}
    for row in rows:
@@ -81,3 +82,41 @@ def resolver(category,db=None):
  values=names(category,db)
  def resolve(id):return values.get(id,'이름 미확인 #'+str(id))
  return resolve
+
+
+_layout_cache={}
+def land_layouts(db=None):
+ path=data_root(db)/'plugin-land-layouts.json'
+ try:
+  stat=path.stat()
+  if stat.st_size>4*1024*1024:return []
+  signature=(stat.st_mtime_ns,stat.st_size)
+  if _layout_cache.get(path,(None,None))[0]==signature:return _layout_cache[path][1]
+  value=json.loads(path.read_text(encoding='utf-8-sig'))
+  if value.get('schema')!=1 or value.get('source')!='live_scene_land_groups' or value.get('complete') is not True:return []
+  layouts=value.get('layouts')
+  if not isinstance(layouts,list) or len(layouts)>128:return []
+  identities=set()
+  for layout in layouts:
+   identity=(layout.get('map_id'),layout.get('map_data_id'))
+   if any(type(v) is not int or v<0 for v in identity) or identity in identities:return []
+   identities.add(identity);nodes=layout.get('base_nodes');groups=layout.get('groups')
+   if not isinstance(nodes,list) or not 0<len(nodes)<=2000 or not isinstance(groups,list) or len(groups)>256:return []
+   ids=set()
+   for node in nodes:
+    id=node.get('node_id');kind=node.get('land_type')
+    if type(id) is not int or id<0 or id in ids or type(kind) is not int or kind<0:return []
+    ids.add(id)
+   seen_groups=set()
+   for group in groups:
+    id=group.get('group_id');members=group.get('nodes');statuses=group.get('statuses')
+    if type(id) is not int or id<=0 or id in seen_groups or not isinstance(members,list) or len(members)>2000 or not isinstance(statuses,list) or not 0<len(statuses)<=256:return []
+    seen_groups.add(id)
+    if any(type(node) is not int or node not in ids for node in members) or len(set(members))!=len(members):return []
+    indices=set()
+    for status in statuses:
+     index=status.get('index');kind=status.get('land_type')
+     if type(index) is not int or index<0 or index in indices or type(kind) is not int or kind<0 or type(status.get('active')) is not bool:return []
+     indices.add(index)
+  _layout_cache[path]=(signature,layouts);return layouts
+ except (OSError,ValueError,TypeError,AttributeError):return []

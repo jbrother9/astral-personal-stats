@@ -31,7 +31,7 @@ def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None,difficulty=No
  extra,args=personal.difficulty_clause('m',difficulty);where+=extra;params+=args
  rows=db.execute('SELECT i.version,i.summary FROM personal_matches m LEFT JOIN personal_match_insights i ON i.replay_id=m.replay_id AND i.owner_id=m.owner_id WHERE '+where,params).fetchall();values=[]
  for version,raw in rows:
-  if version is None or version<personal.INSIGHTS_VERSION:continue
+  if version is None or version<7:continue
   person=next((p for p in json.loads(raw)['participants'] if p['player_id']==owner),None)
   if person and person.get('dice',{}).get('version',0)>=VERSION:values.append(person['dice'])
  return panel(values,len(rows))
