@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using IObject=Il2CppSystem.Object;
 namespace AstralPersonalMod {
- public sealed class MatchAppearance {public bool available{get;set;}public string[][] rows{get;set;}public CardPanel cards{get;set;}public long player_id{get;set;}public int hero_id{get;set;}public int standing_painting_id{get;set;}public string name{get;set;}public string hero_name{get;set;}public bool own{get;set;}}
+ public sealed class MatchAppearance {public bool[] best{get;set;}public int? final_stars{get;set;}public bool available{get;set;}public string[][] rows{get;set;}public CardPanel cards{get;set;}public long player_id{get;set;}public int hero_id{get;set;}public int standing_painting_id{get;set;}public string name{get;set;}public string hero_name{get;set;}public bool own{get;set;}}
  // Uses the game's TextureLoader/TextureManager, including its cache and reference lifetime.
  internal sealed class MatchPortraits {
   sealed class Pending {internal IObject Loader;internal string Fallback;internal float Deadline;}

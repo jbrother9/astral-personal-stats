@@ -13,7 +13,7 @@ using IType = Il2CppSystem.Type;
 using IFlags = Il2CppSystem.Reflection.BindingFlags;
 
 namespace AstralPersonalMod {
- [BepInPlugin("local.astral.personalcollector", "Astral Personal Collector", "0.8.11")]
+ [BepInPlugin("local.astral.personalcollector", "Astral Personal Collector", "0.8.34")]
  public sealed class Plugin : BasePlugin {
   internal static Plugin Instance;
   internal string Backend, Python, WorkerExecutable, DataDir;
@@ -33,14 +33,14 @@ namespace AstralPersonalMod {
    Python=Config.Bind<string>("Paths","PythonExecutable","","Optional legacy Python runtime; not needed for distribution").Value;
    DataDir=Config.Bind<string>("Paths","DataDirectory",Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AstralPersonalStats"),"Personal database, configuration and replay cache").Value;
    Directory.CreateDirectory(DataDir);Directory.CreateDirectory(Path.Combine(DataDir,"plugin-inbox"));
-   RuntimeDiagnostics.Initialize(DataDir,"0.8.11");
+   RuntimeDiagnostics.Initialize(DataDir,"0.8.34");
    // Do not use ClassInjector/AddComponent: the installed bridge's metadata hook crashes this HybridCLR game.
    watcher=new Watcher();profileUI=new ProfileStatsUI();gameCatalog=new RuntimeGameCatalog();
    var update=typeof(UnityEngine.EventSystems.EventSystem).GetMethod("Update",BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic);
    if(update==null)throw new MissingMethodException("EventSystem.Update");
    framePatch=new Harmony("local.astral.personalcollector.frame");
    framePatch.Patch(update,postfix:new HarmonyMethod(typeof(Plugin).GetMethod(nameof(OnUnityFrame),BindingFlags.Static|BindingFlags.NonPublic)));
-   Log.LogInfo("Personal collector 0.8.11 loaded without class injection. Waiting for existing Unity event loop.");
+   Log.LogInfo("Personal collector 0.8.34 loaded without class injection. Waiting for existing Unity event loop.");
   }
   private static void OnUnityFrame() {
    if(Instance==null||watcher==null||profileUI==null)return;
@@ -121,7 +121,7 @@ namespace AstralPersonalMod {
   private static bool Truth(IObject value){return NativeValue.Boolean(value);}
   private void Status(string status) {
    Plugin p=Plugin.Instance;
-   string json="{\"version\":\"0.8.11\",\"game_pid\":"+Process.GetCurrentProcess().Id+",\"owner_id\":"+owner+",\"owner_verified\":"+(owner>0?"true":"false")+",\"canonical_id\":"+canonicalId+",\"candidate_id\":"+candidateId+",\"career_account_id\":"+careerAccountId+",\"history_status\":\""+historyStatus+"\",\"history_seen\":"+historySeen+",\"room_present\":"+(roomPresent?"true":"false")+",\"room_state\":"+observedState+",\"self_id\":"+observedSelf+",\"start_time\":"+startTime+",\"room_id\":"+roomId+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+status+"\"}";
+   string json="{\"version\":\"0.8.34\",\"game_pid\":"+Process.GetCurrentProcess().Id+",\"owner_id\":"+owner+",\"owner_verified\":"+(owner>0?"true":"false")+",\"canonical_id\":"+canonicalId+",\"candidate_id\":"+candidateId+",\"career_account_id\":"+careerAccountId+",\"history_status\":\""+historyStatus+"\",\"history_seen\":"+historySeen+",\"is_playing\":"+(running?"true":"false")+",\"room_present\":"+(roomPresent?"true":"false")+",\"room_state\":"+observedState+",\"self_id\":"+observedSelf+",\"start_time\":"+startTime+",\"room_id\":"+roomId+",\"heartbeat\":"+DateTimeOffset.UtcNow.ToUnixTimeSeconds()+",\"status\":\""+status+"\"}";
    string temp=Path.Combine(p.DataDir,"plugin-state.json.part");File.WriteAllText(temp,json);
    string target=Path.Combine(p.DataDir,"plugin-state.json");
    if(File.Exists(target))File.Delete(target);File.Move(temp,target);
@@ -180,14 +180,18 @@ namespace AstralPersonalMod {
     stage="replay_guard";IObject session=Read(Read(manager,"replay"),"Session");
     if(Truth(Read(session,"IsReplay"))){running=false;return;}
     stage="own_history_sync";PollOwnHistory(account,now);
-    stage="room_info";IObject room=Read(Read(manager,"room"),"curRoomInfo");roomPresent=room!=null;observedState=0;observedSelf=0;
-    if(room==null){if(running&&++absent>=6){Emit("left_room");running=false;}return;}
+    stage="room_info";IObject roomLogic=Read(manager,"room");IObject room=Read(Read(roomLogic,"roomController"),"localRoom")??Read(roomLogic,"curRoomInfo");roomPresent=room!=null;observedState=0;observedSelf=0;
+    if(room==null){if(running&&++absent>=6){Emit("left_room");running=false;Status("watching");}return;}
     absent=0;
     stage="own_room_guard";IObject self=Call(room,"GetSelfInfo");observedSelf=Number(Read(Read(self,"serverPlayer"),"id_"));if(observedSelf!=owner)return;
     stage="room_state";IObject serverRoom=Read(room,"info");long stateCode=Number(Read(room,"State"));observedState=stateCode;
     long currentRoom=Number(Read(serverRoom,"id_"));long start=Number(Read(serverRoom,"startTime_"));
-    if(stateCode==25&&start>0){roomId=currentRoom;startTime=start;running=true;}
-    if(stateCode==30&&start>0){roomId=currentRoom;startTime=start;Emit("finish");running=false;}
+    var ui=NativeUI.Static("UI.UIManager","inst");var panel=Read(ui,"currentPanel");bool atHome=panel!=null&&NativeUI.TypeName(panel)=="UI.HomePanel";
+    string panelType=panel==null?"":NativeUI.TypeName(panel);bool finishReady=panelType=="UI.BattleSettlementPanel"||panelType=="UI.SinglePlayerSettlementPanel";
+    bool wasRunning=running;
+    if(MatchLifecyclePolicy.Playing(stateCode,start,atHome,finishReady)){roomId=currentRoom;startTime=start;running=true;}
+    if(MatchLifecyclePolicy.Finished(stateCode,start,wasRunning,atHome,finishReady)){roomId=currentRoom;startTime=start;Emit("finish");running=false;}
+    if(wasRunning!=running)Status("watching");
    }catch(Exception error){
     RuntimeDiagnostics.Error("watcher."+stage,error);
     if(now>=nextHeartbeat){Plugin.Instance.Log.LogWarning("Collector read retry at "+stage+": "+error.GetType().Name);Status("reflection_retry");nextHeartbeat=now+15;}
