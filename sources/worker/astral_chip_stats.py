@@ -131,19 +131,21 @@ def panel(values,total,key,title,db=None,match=False):
   items=[]
   for session in sorted(sessions,key=lambda s:s['selection_id']):
    rid=session['chip_id'];turn=session.get('round');confirmed=session['connection_confirmed'];stages=session['stages'];acquisition_only=session.get('acquisition_only',False)
-   detail_rows=[]
+   detail_rows=[];detail_options=[]
    for i,stage in enumerate(stages):
     text=' / '.join(resolve_name(x) for x in stage['offers']) or '후보 확인 불가'
     if not confirmed:text+=' (최종 선택 연결 미확인)'
     detail_rows.append(['최초 후보' if i==0 else '새로고침 '+str(i),text])
-   if not stages:detail_rows.append(['최초 후보','확인 불가 · 연결되는 후보 기록이 없습니다.'])
+    detail_options.append([{'chip_id':id,'name':resolve_name(id),'rarity':metadata.get(id,{}).get('rarity',0)} for id in stage['offers']])
+   if not stages:detail_rows.append(['최초 후보','확인 불가 · 연결되는 후보 기록이 없습니다.']);detail_options.append([])
    detail_rows.append(['최종 선택',resolve_name(rid)])
+   detail_options.append([{'chip_id':rid,'name':resolve_name(rid),'rarity':metadata.get(rid,{}).get('rarity',0)}])
    label=str(turn)+'턴' if type(turn) is int and turn>0 else '턴 미확인';source=session.get('reward_source_relic_id',0)
    acquisition_label=resolve_name(source)+' 보상' if source else ''
    if acquisition_only:
     if not source:label+='에 획득'
-    detail_rows=[]
-   items.append({'selection_id':session['selection_id'],'acquisition_only':acquisition_only,'acquisition_label':acquisition_label,'selected_turn':turn,'turn_label':label,'chip_id':rid,'rarity':metadata.get(rid,{}).get('rarity',0),'name':resolve_name(rid),'count':1,'average':'1','connection_confirmed':confirmed,'detail_rows':detail_rows,'detail_note':('' if acquisition_only else '후보 변경 순서 기준입니다. 실제 창 열람 여부는 확인할 수 없습니다.' if confirmed else '후보와 최종 선택의 연결을 확정할 수 없습니다. 후보 누락 또는 별도 지급일 수 있습니다.')})
+    detail_rows=[];detail_options=[]
+   items.append({'selection_id':session['selection_id'],'acquisition_only':acquisition_only,'acquisition_label':acquisition_label,'selected_turn':turn,'turn_label':label,'chip_id':rid,'rarity':metadata.get(rid,{}).get('rarity',0),'name':resolve_name(rid),'count':1,'average':'1','connection_confirmed':confirmed,'detail_rows':detail_rows,'detail_options':detail_options,'detail_note':('' if acquisition_only or confirmed else '후보와 최종 선택의 연결을 확정할 수 없습니다. 후보 누락 또는 별도 지급일 수 있습니다.')})
  return {'key':key,'title':title,'analyzed':analyzed,'total':total,'selections':sum(counts.values()),'rerolls':rerolls,'items':items}
 
 def aggregate(db,owner,mode=None,map_id=None,hero_id=None,rid=None,difficulty=None):

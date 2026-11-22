@@ -125,6 +125,43 @@ def gold_transfers(data,players,include_skills=True):
 def shop_transfers(data,players):
  return gold_transfers(data,players,include_skills=False)
 
+def shop_visits(data,players,transfers):
+ visits={pid:[] for pid in players}
+ pending={}
+ transfers_by_frame={t['debit_frame']-1:t for t in transfers if t['source']=='shop'}
+ pos=frame=turn=0
+ while pos<len(data):
+  op,size=struct.unpack_from('>HI',data,pos);pos+=6;raw=data[pos:pos+size];pos+=size;frame+=1
+  if op==1015:
+   turn=replay.first(replay.protobuf(raw),1);pending.clear()
+  elif op in (1003,1113):
+   room=replay.protobuf(replay.first(replay.protobuf(raw),1 if op==1003 else 2,b''))
+   turn=replay.first(room,14,turn);pending.clear()
+  elif op==5216:
+   fields=replay.protobuf(raw);pid=replay.first(fields,1)
+   if pid not in visits:continue
+   visit=pending.setdefault(pid,{'round':turn,'choices':[],'transfers':[]})
+   transfer=transfers_by_frame.get(frame)
+   if transfer:visit['transfers'].append({key:transfer[key] for key in ('recipient','amount','received')})
+   try:
+    visit['choices'].extend(cards.fixed32_values(fields.get(2,[])))
+    if not replay.first(fields,6):continue
+    offers=cards.fixed32_values(fields.get(4,[]))
+    sold=[flag for value in fields.get(5,[]) for flag in ([value] if isinstance(value,int) else value)]
+    chosen=visit['choices']
+    valid=bool(offers) and len(sold)==len(offers) and all(flag in (0,1) for flag in sold)
+    valid=valid and len(chosen)==len(set(chosen)) and set(chosen)=={i for i,flag in enumerate(sold) if flag}
+    valid=valid and all(0<=i<len(offers) and offers[i]>0 for i in chosen)
+    visit.update(offers=offers,bought=[offers[i] for i in chosen] if valid else None)
+   except ValueError:
+    visit['invalid']=True
+    if not replay.first(fields,6):continue
+    visit.update(offers=[],bought=None)
+   if visit.pop('invalid',False):visit['bought']=None
+   visit.pop('choices')
+   visits[pid].append(pending.pop(pid))
+ return visits
+
 
 def kill_gold_rewards(data,players):
  # Pending payouts are grouped by killer and recorded wallet amount. Multiple
@@ -752,6 +789,15 @@ def family_summary(label,row):
  if row['unresolved']:value+=' (미확인 '+str(row['unresolved'])+')'
  return value
 
+def ending_rounds(db,owner):
+ result=dict(db.execute("SELECT replay_id,MAX(round) FROM personal_events WHERE owner_id=? AND round>0 GROUP BY replay_id",(owner,)))
+ for rid,raw in db.execute('SELECT replay_id,summary FROM personal_match_insights WHERE owner_id=?',(owner,)):
+  insight=json.loads(raw)
+  rounds=[event.get('round') for person in insight.get('participants',[]) for event in person.get('timeline',[])]
+  observed=max((value for value in rounds if type(value) is int and value>0),default=0)
+  if observed:result[rid]=max(result.get(rid,0),observed)
+ return result
+
 def statistics(db,owner,mode=None,map_id=None,hero_id=None,difficulty=None):
  """Personal-only aggregation. Separate PvE/PvP win rates; unknown results are excluded."""
  where='owner_id=?';params=[owner]
@@ -774,20 +820,24 @@ def statistics(db,owner,mode=None,map_id=None,hero_id=None,difficulty=None):
   reached=json.loads(raw).get('growth3_round');growth.pop(rid,None)
   if reached is not None:growth[rid]=reached
  metrics_by_id={rid:normalized_totals(json.loads(raw)) for rid,raw in db.execute('SELECT replay_id,metrics FROM personal_game_totals WHERE owner_id=?',(owner,))}
+ final_rounds=ending_rounds(db,owner)
  def movement_damage(items):
   values=[metrics_by_id.get(r[0],{}) for r in items];result={}
-  for key in ('movement_distance','damage_dealt','damage_taken','deaths','transferred_gold','max_battle_damage'):
+  for key in ('movement_distance','damage_dealt','damage_taken','deaths','transferred_gold','max_battle_damage','growth_final'):
    found=[r[key] for r in values if r.get(key) is not None]
    result[key+'_analyzed']=len(found)
    result[key]=max(found) if key=='max_battle_damage' and found else sum(found)
    result['average_'+key]=sum(found)/len(found) if found else None
+   result['peak_'+key]=max(found,default=None)
   result['movement_damage_analyzed']=sum(r.get('movement_distance') is not None and r.get('damage_dealt') is not None for r in values)
   return result
  def aggregate(items):
   count=len(items);ranked=[r[4] for r in items if r[4] is not None];rounds=[growth[r[0]] for r in items if r[0] in growth]
   outcomes=[match_outcome(r[3],r[4]) for r in items];wins=outcomes.count('win');losses=outcomes.count('loss');decided=wins+losses;families={mode_family(r[3]) for r in items}
   win_rate=wins/decided if decided and len(families)==1 and 'other' not in families else None
-  return {'wins':wins,'losses':losses,'decided':decided,'unresolved':count-decided,'win_rate':win_rate,'matches':count,'duration':sum(r[5] or 0 for r in items),'first_places':sum(r[4]==1 for r in items),'average_rank':sum(ranked)/len(ranked) if ranked else None,'average_duration':sum(r[5] or 0 for r in items)/count if count else 0,'deaths':sum(r[7] or 0 for r in items),'average_deaths':sum(r[7] or 0 for r in items)/count if count else 0,'average_npc_last_hits':sum(r[8] or 0 for r in items)/count if count else 0,'average_effect_cards':sum(r[9] or 0 for r in items)/count if count else 0,'average_battle_cards':sum(r[10] or 0 for r in items)/count if count else 0,'average_skills':sum(r[11] or 0 for r in items)/count if count else 0,**movement_damage(items),'growth3_average_round':sum(rounds)/len(rounds) if rounds else None,'growth3_reached_matches':len(rounds)}
+  clear_rounds=[final_rounds[r[0]] for r in items if r[0] in final_rounds and mode_family(r[3])=='pve' and match_outcome(r[3],r[4])=='win']
+  records={'average_clear_round':sum(clear_rounds)/len(clear_rounds) if clear_rounds else None,'fastest_clear_round':min(clear_rounds,default=None)}
+  return {'wins':wins,'losses':losses,'decided':decided,'unresolved':count-decided,'win_rate':win_rate,'matches':count,'duration':sum(r[5] or 0 for r in items),'first_places':sum(r[4]==1 for r in items),'average_rank':sum(ranked)/len(ranked) if ranked else None,'average_duration':sum(r[5] or 0 for r in items)/count if count else 0,'deaths':sum(r[7] or 0 for r in items),'average_deaths':sum(r[7] or 0 for r in items)/count if count else 0,'average_npc_last_hits':sum(r[8] or 0 for r in items)/count if count else 0,'average_effect_cards':sum(r[9] or 0 for r in items)/count if count else 0,'average_battle_cards':sum(r[10] or 0 for r in items)/count if count else 0,'average_skills':sum(r[11] or 0 for r in items)/count if count else 0,**movement_damage(items),**records,'growth3_average_round':sum(rounds)/len(rounds) if rounds else None,'growth3_reached_matches':len(rounds)}
  def group(indices):
   groups={}
   for row in rows:groups.setdefault(tuple(row[i] for i in indices),[]).append(row)
@@ -805,7 +855,7 @@ def appearances(db,rid,owner):
  return json.loads(row[0]) if row else []
 
 
-INSIGHTS_VERSION=46
+INSIGHTS_VERSION=47
 
 def has_insights(db,rid,owner):
  row=db.execute('SELECT version FROM personal_match_insights WHERE replay_id=? AND owner_id=?',(rid,owner)).fetchone()
@@ -840,6 +890,7 @@ def save_insights(db,data,summary,owner):
   counter[(entity['kind'],entity['hero_id'])]+=1
  participants=[];transfers=gold_transfers(data,{p['player_id'] for p in summary['participants']});kill_rewards=kill_gold_rewards(data,{p['player_id'] for p in summary['participants']});purchases=purchase_gold_cards(data,{p['player_id'] for p in summary['participants']});buff_refs=buff_effect_sources(data);land_refs=land_effect_sources(data,game_catalog.land_layouts(db));hp_refs=hp_maximum_sources(data)
  unapplied_gold=terminal_unapplied_gold(data,summary);death_refs=death_effect_sources(data,buff_refs,land_refs,hp_refs);shared_chips=chips.shared_grant_frames(data)
+ shops=shop_visits(data,{p['player_id'] for p in summary['participants']},transfers)
  for p in summary['participants']:
   record,events=analyze(data,summary,p['player_id'],transfers,kill_rewards,purchases,buff_refs,land_refs,hp_refs,unapplied_gold,death_refs)
   timeline=[]
@@ -851,7 +902,9 @@ def save_insights(db,data,summary,owner):
    elif type(source) is not int or not source:source=detail.get('target',0)
    entity=entities.get(source) if source not in ambiguous else None
    timeline.append({'round':event[4] or None,'kind':event[6],'detail':detail,'entity':entity,'entity_id':source,'transfer_party':{'id':(detail.get('transfer') or {}).get('counterpart',0),'entity':entities.get((detail.get('transfer') or {}).get('counterpart'))},'targets':[{'id':target,'entity':entities.get(target) if target not in ambiguous else None} for target in detail.get('targets',[])],'opponent':{'id':detail.get('opponent_id',0),'entity':entities.get(detail.get('opponent_id')) if detail.get('opponent_id') not in ambiguous else None}})
-  participants.append({'player_id':p['player_id'],'timeline':timeline,'totals':summarize_events(record,events),'cards':cards.analyze(data,p['player_id']),'chips':chips.analyze(data,p['player_id'],shared_chips),'dice':dice.analyze(data,p['player_id'])})
+  totals=summarize_events(record,events)
+  totals['shop_visits']=len(shops[p['player_id']])
+  participants.append({'player_id':p['player_id'],'timeline':timeline,'totals':totals,'shops':shops[p['player_id']],'cards':cards.analyze(data,p['player_id']),'chips':chips.analyze(data,p['player_id'],shared_chips),'dice':dice.analyze(data,p['player_id'])})
  value={'participants':participants,'killers':[{'kind':kind,'hero_id':hero,'count':count} for (kind,hero),count in sorted(counter.items())],'unknown_deaths':unknown,'deaths':len(deaths)}
  db.execute('INSERT OR REPLACE INTO personal_match_insights VALUES (?,?,?,?)',(summary['replay_id'],owner,INSIGHTS_VERSION,json.dumps(value,ensure_ascii=False)))
 

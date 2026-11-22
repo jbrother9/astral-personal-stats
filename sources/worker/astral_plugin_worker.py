@@ -118,16 +118,26 @@ def refresh_land_layouts(store,state):
  return changed
 
 
-def backfill_card_cache(store,state,status=None):
+def backfill_card_cache(store,state,status=None,batch=None):
  if not state or state.get('owner_verified') is not True:return False
  owner=state.get('owner_id');rows=store.db.execute('SELECT m.replay_id FROM personal_matches m LEFT JOIN personal_card_stats c ON c.replay_id=m.replay_id AND c.owner_id=m.owner_id WHERE m.owner_id=? AND (c.version IS NULL OR c.version<? OR m.analysis_version<? OR NOT EXISTS (SELECT 1 FROM personal_appearances a WHERE a.replay_id=m.replay_id AND a.owner_id=m.owner_id) OR NOT EXISTS (SELECT 1 FROM personal_match_insights i WHERE i.replay_id=m.replay_id AND i.owner_id=m.owner_id AND i.version>=?)) ORDER BY m.finished_at DESC',(owner,cards.VERSION,personal.VERSION,personal.INSIGHTS_VERSION)).fetchall()
+ available={rid for (rid,) in rows if replay.valid_id(rid) and (store.root/'replays'/rid).is_file()}
+ if batch is not None:
+  if batch.get('owner')!=owner or not available or not (available & batch.get('remaining',set())):
+   batch.clear();batch.update(owner=owner,done=0)
+  batch['remaining']=available
  for (rid,) in rows:
   file=store.root/'replays'/rid
-  if not replay.valid_id(rid) or not file.is_file():continue
-  if status:status('backfill',rid,owner)
+  if rid not in available:continue
+  if status:
+   if batch is None:status('backfill',rid,owner)
+   else:status('backfill',rid,owner,(batch['done'],batch['done']+len(available)))
   data=file.read_bytes();summary=replay.parse_replay(data,rid)
   if owner not in [p['player_id'] for p in summary['participants']]:continue
   personal.index(store.db,data,summary,owner)
+  if batch is not None:
+   batch['done']+=1
+   if status:status('backfill',rid,owner,(batch['done'],batch['done']+len(available)-1))
   notify_data_changed(store,owner)
   return True
  return False
@@ -144,10 +154,10 @@ def heartbeat(store):
   return state
  except (OSError,ValueError):return None
 
-def publish_ui_if_requested(store,state,last_signature):
+def publish_ui_if_requested(store,state,last_signature,status=None):
  try:
   info=(store.root/'plugin-ui-request.json').stat();signature=(info.st_mtime_ns,info.st_size)
-  if signature!=last_signature and overlay.publish(store,state):return signature
+  if signature!=last_signature and overlay.publish(store,state,before_snapshot=(lambda:status('snapshot')) if status else None):return signature
  except OSError:pass
  return last_signature
 
@@ -157,20 +167,21 @@ def run(data_dir,once=False,idle_seconds=180,stop_event=None,parent_pid=None):
  try:
   with collector.WatchLock(store.root/'plugin-worker.lock'):
    collector.say('Plugin worker started. No packet capture.');last_seen=time.monotonic();last_cleanup=0;last_ui_signature=None
+   batch={}
    while True:
     if stop_event is not None and stop_event.is_set():collector.say('Game process ended; pending requests retained for next launch.');break
     state=heartbeat(store)
     if state:last_seen=time.monotonic()
-    def report(phase=None,rid=None,job_owner=None):
-     try:return collection_status.publish(store,state,phase,rid,job_owner)
+    def report(phase=None,rid=None,job_owner=None,progress=None):
+     try:return collection_status.publish(store,state,phase,rid,job_owner,progress)
      except (OSError,sqlite3.Error):return False
-    consume_inbox(store);refresh_land_layouts(store,state);report();active=process_one(store,status=report)
+    consume_inbox(store);collection_status.consume_retry(store,state);refresh_land_layouts(store,state);report();active=process_one(store,status=report)
     if not active:
-     try:active=backfill_card_cache(store,state,status=report)
+     try:active=backfill_card_cache(store,state,status=report,batch=batch)
      except (OSError,ValueError,IndexError,struct.error):collector.say('Card cache backfill skipped an unreadable replay.')
-    report()
     if active:last_seen=time.monotonic()
-    last_ui_signature=publish_ui_if_requested(store,state,last_ui_signature)
+    last_ui_signature=publish_ui_if_requested(store,state,last_ui_signature,status=report)
+    report()
     if time.monotonic()-last_cleanup>60:
      prefs=personal.settings()
      if prefs['cache_enabled']:personal.cleanup(store.db,store.root,int(prefs['cache_days']))
