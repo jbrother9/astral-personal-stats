@@ -1,6 +1,6 @@
-# v0.8.34-beta.1 추가 수정본 (2026-11-22)
+# v0.9.0-beta.1 (2026-11-22)
 
-버전 번호는 0.8.34를 유지합니다. 설치 패키지는 `AstralPersonalStats-0.8.34-beta.1-win-x64-updated.zip`입니다.
+이번 배포의 내부 버전은 0.9.0입니다. 설치 패키지는 `AstralPersonalStats-0.9.0-beta.1-win-x64.zip`입니다.
 
 ## 변경 사항
 
